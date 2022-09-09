@@ -1,7 +1,7 @@
 #! /bin/bash
 
 #OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=2 python main_nerf.py data/fox --workspace trial_nerf_fox -O
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=1 python main_nerf.py data/nerf_synthetic/lego --workspace trial_nerf_lego -O --bound 1 --scale 0.8 --dt_gamma 0
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=1 python main_nerf.py ../blender_dataset/kitti --workspace nerf_kitti -O --bound 1 --scale 0.8 --dt_gamma 0
 #OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=1 python main_nerf.py data/nerf_synthetic/lego --workspace trial_nerf_lego_emap -O --bound 1 --scale 0.8 --dt_gamma 0 --error_map
 #OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=2 python main_nerf.py data/TanksAndTemple/Barn --workspace trial_nerf_barn -O --bound 1.0 --scale 0.33 --dt_gamma 0
 

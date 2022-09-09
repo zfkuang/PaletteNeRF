@@ -2,6 +2,8 @@ import os
 import cv2
 import glob
 import json
+import math
+from cv2 import transform
 import tqdm
 import numpy as np
 from scipy.spatial.transform import Slerp, Rotation
@@ -10,8 +12,11 @@ import trimesh
 
 import torch
 from torch.utils.data import DataLoader
+from sklearn.cluster import KMeans, MeanShift
+from skimage import color
+import imageio
 
-from .utils import get_rays, srgb_to_linear
+from .utils import get_rays
 
 
 # ref: https://github.com/NVlabs/instant-ngp/blob/b76004c8cf478880227401ae763be4c02f80b62f/include/neural-graphics-primitives/nerf_loader.h#L50
@@ -163,35 +168,56 @@ class NeRFDataset:
         
         # for colmap, manually interpolate a test set.
         if self.mode == 'colmap' and type == 'test':
-            
+
             # choose two random poses, and interpolate between.
             f0, f1 = np.random.choice(frames, 2, replace=False)
             pose0 = nerf_matrix_to_ngp(np.array(f0['transform_matrix'], dtype=np.float32), scale=self.scale, offset=self.offset) # [4, 4]
             pose1 = nerf_matrix_to_ngp(np.array(f1['transform_matrix'], dtype=np.float32), scale=self.scale, offset=self.offset) # [4, 4]
-            time0 = f0['time'] if 'time' in f0 else int(os.path.basename(f0['file_path'])[:-4])
-            time1 = f1['time'] if 'time' in f1 else int(os.path.basename(f1['file_path'])[:-4])
             rots = Rotation.from_matrix(np.stack([pose0[:3, :3], pose1[:3, :3]]))
             slerp = Slerp([0, 1], rots)
 
             self.poses = []
             self.images = None
-            self.times = []
             for i in range(n_test + 1):
                 ratio = np.sin(((i / n_test) - 0.5) * np.pi) * 0.5 + 0.5
                 pose = np.eye(4, dtype=np.float32)
                 pose[:3, :3] = slerp(ratio).as_matrix()
                 pose[:3, 3] = (1 - ratio) * pose0[:3, 3] + ratio * pose1[:3, 3]
                 self.poses.append(pose)
-                time = (1 - ratio) * time0 + ratio * time1
-                self.times.append(time)
-            
-            # manually find max time to normalize
-            if 'time' not in f0:
-                max_time = 0
-                for f in frames:
-                    max_time = max(max_time, int(os.path.basename(f['file_path'])[:-4]))
-                self.times = [t / max_time for t in self.times]
+        elif self.mode == 'blender' and type == 'test':        
+            origin_poses = []    
+            for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
+                f_path = os.path.join(self.root_path, f['file_path'])
+                if self.mode == 'blender' and '.' not in os.path.basename(f_path):
+                    f_path += '.png' # so silly...
 
+                # there are non-exist paths in fox...
+                if not os.path.exists(f_path):
+                    continue
+                if self.H is None or self.W is None:
+                    image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
+                    self.H = image.shape[0] // downscale
+                    self.W = image.shape[1] // downscale
+
+                pose = np.array(f['transform_matrix'], dtype=np.float32) # [4, 4]
+                pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
+                origin_poses.append(pose)
+                
+            origin_poses = np.stack(origin_poses, axis=0)
+            rots = Rotation.from_matrix(origin_poses[:, :3, :3])
+            slerp = Slerp(np.arange(len(origin_poses)), rots)
+            
+            self.poses = []
+            self.images = None
+            step_size = (len(origin_poses)-1) / n_test
+            for i in range(n_test + 1):
+                pose_idx = min(len(origin_poses)-2, math.floor(i * step_size))
+                ratio = i * step_size - pose_idx
+                pose = np.eye(4, dtype=np.float32)
+                pose[:3, :3] = slerp(i * step_size).as_matrix()
+                pose[:3, 3] = (1 - ratio) * origin_poses[pose_idx, :3, 3] + \
+                                ratio * origin_poses[pose_idx+1, :3, 3]
+                self.poses.append(pose)
         else:
             # for colmap, manually split a valid set (the first frame).
             if self.mode == 'colmap':
@@ -203,9 +229,7 @@ class NeRFDataset:
             
             self.poses = []
             self.images = []
-            self.times = []
-
-            # assume frames are already sorted by time!
+            fg_rays = []
             for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
                 f_path = os.path.join(self.root_path, f['file_path'])
                 if self.mode == 'blender' and '.' not in os.path.basename(f_path):
@@ -219,6 +243,8 @@ class NeRFDataset:
                 pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
 
                 image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
+                if image.dtype == np.uint16:
+                    image = (image // 256).astype(np.uint8)
                 if self.H is None or self.W is None:
                     self.H = image.shape[0] // downscale
                     self.W = image.shape[1] // downscale
@@ -231,27 +257,30 @@ class NeRFDataset:
 
                 if image.shape[0] != self.H or image.shape[1] != self.W:
                     image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
-                    
                 image = image.astype(np.float32) / 255 # [H, W, 3/4]
-
-                # frame time
-                if 'time' in f:
-                    time = f['time']
-                else:
-                    time = int(os.path.basename(f['file_path'])[:-4]) # assume frame index as time
 
                 self.poses.append(pose)
                 self.images.append(image)
-                self.times.append(time)
-            
+                if image.shape[-1] == 4:
+                    fg_rays.append(image[image[...,3]>0.8][...,:3])
+                else:
+                    fg_rays.append(image)
+
+            fg_rays = np.concatenate(fg_rays, axis=0).reshape(-1, 3)        
+            lab = color.rgb2lab(fg_rays)
+            lab = lab[np.random.choice(lab.shape[0], lab.shape[0]//16)]
+            # kmeans = KMeans(n_clusters=5, random_state=0).fit(X)
+            clustering = KMeans(n_clusters=self.opt.color_cluster_num, random_state=0).fit(lab[:,1:])
+            center = clustering.cluster_centers_
+            center = np.concatenate([center[:,0:1]*0+50, center], axis=-1)
+            center = color.lab2rgb(center).astype(np.float32)
+            self.cluster_color = center
+            center_img = (center*255).astype(np.uint8)
+            center_img = center[:,None,None,:].repeat(256, 1).repeat(256, 2).reshape(-1, 256, 3)    
+            imageio.imwrite("test.png", center_img)
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
         if self.images is not None:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]
-        self.times = torch.from_numpy(np.asarray(self.times, dtype=np.float32)).view(-1, 1) # [N, 1]
-
-        # manual normalize
-        if self.times.max() > 1:
-            self.times = self.times / (self.times.max() + 1e-8) # normalize to [0, 1]
         
         # calculate mean radius of all camera poses
         self.radius = self.poses[:, :3, 3].norm(dim=-1).mean(0).item()
@@ -280,7 +309,6 @@ class NeRFDataset:
                 self.images = self.images.to(dtype).to(self.device)
             if self.error_map is not None:
                 self.error_map = self.error_map.to(self.device)
-            self.times = self.times.to(self.device)
 
         # load intrinsics
         if 'fl_x' in transform or 'fl_y' in transform:
@@ -323,14 +351,12 @@ class NeRFDataset:
             }
 
         poses = self.poses[index].to(self.device) # [B, 4, 4]
-        times = self.times[index].to(self.device) # [B, 1]
 
         error_map = None if self.error_map is None else self.error_map[index]
         
-        rays = get_rays(poses, self.intrinsics, self.H, self.W, self.num_rays, error_map)
-        
+        rays = get_rays(poses, self.intrinsics, self.H, self.W, self.num_rays, error_map, self.opt.patch_size)
+
         results = {
-            'time': times,
             'H': self.H,
             'W': self.W,
             'rays_o': rays['rays_o'],

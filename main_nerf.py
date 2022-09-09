@@ -106,6 +106,8 @@ if __name__ == '__main__':
     #criterion = partial(huber_loss, reduction='none')
     #criterion = torch.nn.HuberLoss(reduction='none', beta=0.1) # only available after torch 1.10 ?
 
+    opt.workspace = os.path.join("results", opt.workspace)
+    opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+len(glob.glob("%s/version*"%opt.workspace)))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     if opt.test:

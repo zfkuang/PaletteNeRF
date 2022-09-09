@@ -72,7 +72,6 @@ class NeRFGUI:
         self.need_update = True # camera moved, should reset accumulation
         self.spp = 1 # sample per pixel
         self.mode = 'image' # choose from ['image', 'depth']
-        self.time = 0 # time for dynamic scene, in [0, 1]
 
         self.dynamic_resolution = True
         self.downscale = 1
@@ -126,7 +125,7 @@ class NeRFGUI:
             starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
             starter.record()
 
-            outputs = self.trainer.test_gui(self.cam.pose, self.cam.intrinsics, self.W, self.H, self.time, self.bg_color, self.spp, self.downscale)
+            outputs = self.trainer.test_gui(self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, self.spp, self.downscale)
 
             ender.record()
             torch.cuda.synchronize()
@@ -284,13 +283,6 @@ class NeRFGUI:
                     self.need_update = True
                 
                 dpg.add_combo(('image', 'depth'), label='mode', default_value=self.mode, callback=callback_change_mode)
-
-                # time slider
-                def callback_set_time(sender, app_data):
-                    self.time = app_data
-                    self.need_update = True
-
-                dpg.add_slider_float(label="time", min_value=0.0, max_value=1.0, format="%.5f", default_value=self.time, callback=callback_set_time)
 
                 # bg_color picker
                 def callback_change_bg(sender, app_data):

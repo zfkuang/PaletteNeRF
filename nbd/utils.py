@@ -667,7 +667,7 @@ class Trainer(object):
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
             
-            if epoch >= self.opt.max_guide_epoch:
+            if epoch >= self.opt.max_guide_epoch or not self.opt.use_initialization_from_rays:
                 self.model.freeze_basis_color = False
 
         if self.use_tensorboardX and self.local_rank == 0:
@@ -698,8 +698,8 @@ class Trainer(object):
             all_preds_depth = []
             all_preds_basis_img = []
             all_preds_basis_acc = []
-            all_pred_basis_color = []
-            all_pred_basis_roughness = []
+            all_preds_basis_color = []
+            all_preds_basis_roughness = []
 
         with torch.no_grad():
 
@@ -744,8 +744,8 @@ class Trainer(object):
                     all_preds_depth.append(pred_depth)
                     all_preds_basis_img.append(pred_basis_img)
                     all_preds_basis_acc.append(pred_basis_acc)
-                    all_pred_basis_color.append(pred_basis_color)
-                    all_pred_basis_roughness.append(pred_basis_roughness)
+                    all_preds_basis_color.append(pred_basis_color)
+                    all_preds_basis_roughness.append(pred_basis_roughness)
 
                 else:
                     cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_rgb.png'), cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
@@ -762,14 +762,23 @@ class Trainer(object):
             all_preds_depth = np.stack(all_preds_depth, axis=0)
             all_preds_basis_img = np.stack(all_preds_basis_img, axis=0)
             all_preds_basis_acc = np.stack(all_preds_basis_acc, axis=0)
-            all_pred_basis_color = np.stack(all_pred_basis_color, axis=0)
-            all_pred_basis_roughness = np.stack(all_pred_basis_roughness, axis=0)
+            all_preds_basis_color = np.stack(all_preds_basis_color, axis=0)
+            all_preds_basis_roughness = np.stack(all_preds_basis_roughness, axis=0)
+            _, W_img = all_preds_basis_img.shape[1:3]
+            W_img = W_img//self.opt.num_basis
+            _, W_p = all_preds_basis_color.shape[1:3]
+            W_p = W_p//self.opt.num_basis
             imageio.mimwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds, fps=25, quality=8, macro_block_size=1)
             imageio.mimwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, f'{name}_basis_img.mp4'), all_preds_basis_img, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, f'{name}_basis_acc.mp4'), all_preds_basis_acc, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, f'{name}_basis_color.mp4'), all_pred_basis_color, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, f'{name}_basis_roughnes.mp4'), all_pred_basis_roughness, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_roughnes.mp4'%(name)), all_preds_basis_roughness, fps=25, quality=8, macro_block_size=1)
+            for i in range(self.opt.num_basis):
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)], fps=25, quality=8, macro_block_size=1)
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_roughnes.mp4'%(name, i)), all_preds_basis_roughness[:, :, W_p*i:W_p*(i+1)], fps=25, quality=8, macro_block_size=1)
 
         self.log(f"==> Finished Test.")
     

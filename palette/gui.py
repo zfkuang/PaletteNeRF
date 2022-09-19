@@ -4,7 +4,7 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
-from nerf.utils import *
+from .utils import *
 
 
 class OrbitCamera:
@@ -427,10 +427,11 @@ class NeRFGUI:
 
 
     def render(self):
-
         while dpg.is_dearpygui_running():
             # update texture every frame
             if self.training:
                 self.train_step()
             self.test_step()
+            if self.opt.demo_palette:
+                self.load_palette()
             dpg.render_dearpygui_frame()

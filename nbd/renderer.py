@@ -105,6 +105,8 @@ class NBDRenderer(nn.Module):
         if not opt.use_initialization_from_rays:
             self.basis_color = torch.zeros([self.num_basis, 3])+0.5
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
+        else:
+            self.basis_color = None
 
         self.basis_roughness = torch.zeros([self.num_basis])+0.5
         if self.opt.roughness_list[0] >= 0:
@@ -133,8 +135,9 @@ class NBDRenderer(nn.Module):
 
     def initialize_color(self, color_list=None):
         if color_list is None:
-            self.basis_color = torch.zeros([self.num_basis, 3]) + 0.5
-            self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
+            if self.basis_color is None:
+                self.basis_color = torch.zeros([self.num_basis, 3]) + 0.5
+                self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
         else:
             # assert(self.num_basis == color_list.shape[0]*len(self.opt.roughness_list))
             self.basis_color = torch.zeros([self.num_basis, 3])
@@ -372,15 +375,24 @@ class NBDRenderer(nn.Module):
         # z_vals_shifted = torch.cat([z_vals[..., 1:], sample_dist * torch.ones_like(z_vals[..., :1])], dim=-1)
         # mid_zs = (z_vals + z_vals_shifted) / 2 # [N, T]
         # loss_dist = (torch.abs(mid_zs.unsqueeze(1) - mid_zs.unsqueeze(2)) * (weights.unsqueeze(1) * weights.unsqueeze(2))).sum() + 1/3 * ((z_vals_shifted - z_vals_shifted) * (weights ** 2)).sum()
-        return {
-            'depth': depth,
-            'image': rgb_map,
-            'omega_norm': omega_norm_map,
-            'radiance': radiance_map,
-            'basis_rgb': basis_rgb_map,
-            'basis_acc': basis_acc_map,
-            'weights_sum': weights_sum,
-        }
+        if self.opt.hybrid:
+            return {
+                'depth': depth,
+                'image': rgb_map,
+                'omega_norm': omega_norm_map,
+                'radiance': radiance_map,
+                'basis_rgb': basis_rgb_map,
+                'basis_acc': basis_acc_map,
+                'weights_sum': weights_sum,
+            }
+        else:   
+            return {
+                'depth': depth,
+                'image': rgb_map,
+                'basis_rgb': basis_rgb_map,
+                'basis_acc': basis_acc_map,
+                'weights_sum': weights_sum,
+            }
 
 
     # def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):

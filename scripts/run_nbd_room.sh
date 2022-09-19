@@ -1,7 +1,7 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=3 python main_nbd.py ../data/nerf_llff_data/horns/ \
---workspace horns_nbd \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=9 python main_nbd.py ../data/nerf_llff_data/room/ \
+--workspace room_nbd \
 --fp16 \
 --preload \
 --num_basis 12 \

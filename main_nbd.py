@@ -135,10 +135,13 @@ if __name__ == '__main__':
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    if opt.test:
+        opt.ckpt = 'latest'
     # if opt.ckpt == 'scratch':
     workspace_dir = os.path.join("results", opt.workspace)
+    os.makedirs(workspace_dir, exist_ok=True)
     workspace_list = glob.glob("%s/version*"%workspace_dir)
-    workspace_list = max([int(x.split("_")[-1]) for x in workspace_list])
+    workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
     opt.workspace = "%s/version_%d"%(workspace_dir, (1-opt.test)+workspace_list)
     # else:
     #     opt.workspace = os.path.join("results", opt.workspace)
@@ -155,7 +158,7 @@ if __name__ == '__main__':
             gui.render()
         
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test', n_test=1).dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='test', n_test=60).dataloader()
 
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
@@ -177,7 +180,7 @@ if __name__ == '__main__':
         scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
 
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-        trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=120)
+        trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, use_checkpoint=opt.ckpt, eval_interval=50)
 
 
         if opt.gui:

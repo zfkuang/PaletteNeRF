@@ -143,6 +143,9 @@ class NeRFDataset:
                     transform_val = json.load(f)
                 transform['frames'].extend(transform_val['frames'])
             # only load one specified split
+            elif type == 'traintest':
+                with open(os.path.join(self.root_path, f'transforms_train.json'), 'r') as f:
+                    transform = json.load(f)
             else:
                 with open(os.path.join(self.root_path, f'transforms_{type}.json'), 'r') as f:
                     transform = json.load(f)

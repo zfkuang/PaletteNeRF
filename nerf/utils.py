@@ -973,6 +973,44 @@ class Trainer(object):
 
         self.log(f"++> Evaluate epoch {self.epoch} Finished.")
 
+    def sample_rays(self, loader, save_path=None, name=None, write_video=True):
+
+        if save_path is None:
+            save_path = os.path.join(self.workspace, 'results')
+
+        if name is None:
+            name = f'{self.name}_ep{self.epoch:04d}'
+
+        os.makedirs(save_path, exist_ok=True)
+        
+        self.log(f"==> Start Test, save results to {save_path}")
+
+        pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        self.model.eval()
+
+        all_preds = []
+        all_preds_depth = []
+
+        with torch.no_grad():
+
+            for i, data in enumerate(loader):
+                
+                import pdb
+                pdb.set_trace()
+
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    preds, preds_depth = self.test_step(data)
+
+                if self.opt.color_space == 'linear':
+                    preds = linear_to_srgb(preds)
+
+                pred = preds[0]
+                pred_depth = preds_depth[0]
+                pbar.update(loader.batch_size)
+        
+ 
+ 
+
     def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
 
         if name is None:

@@ -2,7 +2,8 @@ import torch
 import argparse
 
 from nerf.provider import NeRFDataset
-from nerf.gui import NeRFGUI
+from palette.gui import PaletteGUI
+from palette.palette_extractor import PaletteExtractor
 from nerf.utils import *
 
 from functools import partial
@@ -13,10 +14,10 @@ from loss import huber_loss
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--ckpt_path', type=str, required=True)
+    parser.add_argument('path', type=str)
+    parser.add_argument('ckpt_path', type=str)
     parser.add_argument('-O', action='store_true', help="equals --fp16 --cuda_ray --preload")
     parser.add_argument('--test', action='store_true', help="test mode")
-    parser.add_argument('--workspace', type=str, default='workspace')
     parser.add_argument('--seed', type=int, default=0)
 
     ### training options
@@ -59,6 +60,9 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
+    ### Palette 
+    parser.add_argument('--extract_palette', action='store_true', help="extract palette")
+    
     opt = parser.parse_args()
 
     if opt.O:
@@ -89,16 +93,15 @@ if __name__ == '__main__':
     
     print(model)
 
-    criterion = torch.nn.MSELoss(reduction='none')
-    #criterion = partial(huber_loss, reduction='none')
-    #criterion = torch.nn.HuberLoss(reduction='none', beta=0.1) # only available after torch 1.10 ?
-
-    opt.workspace = os.path.join("results", opt.workspace)
-    opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+len(glob.glob("%s/version*"%opt.workspace)))
+    workspace=os.path.dirname(os.path.dirname(opt.ckpt_path)).replace("results", "results_palette")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    trainer = PaletteExtractor('ngp', opt, model, device=device, 
+                            fp16=opt.fp16, workspace=workspace, ckpt_path=opt.ckpt_path)
     
-    if opt.test:
-        metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-        trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
-        train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
-        trainer.test(test_loader, write_video=True) # test and save video
+    if opt.extract_palette:
+        train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
+        trainer.sample_rays(train_loader) # test and save video
+
+    if opt.gui:
+        gui = PaletteGUI(opt, trainer)
+        gui.render()

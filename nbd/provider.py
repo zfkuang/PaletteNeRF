@@ -267,17 +267,19 @@ class NeRFDataset:
                     fg_rays.append(image)
 
             fg_rays = np.concatenate(fg_rays, axis=0).reshape(-1, 3)        
-            lab = color.rgb2lab(fg_rays)
-            lab = lab[np.random.choice(lab.shape[0], lab.shape[0]//16)]
-            # kmeans = KMeans(n_clusters=5, random_state=0).fit(X)
-            clustering = KMeans(n_clusters=self.opt.color_cluster_num, random_state=0).fit(lab[:,1:])
-            center = clustering.cluster_centers_
-            center = np.concatenate([center[:,0:1]*0+50, center], axis=-1)
-            center = color.lab2rgb(center).astype(np.float32)
-            self.cluster_color = center
-            center_img = (center*255).astype(np.uint8)
-            center_img = center[:,None,None,:].repeat(256, 1).repeat(256, 2).reshape(-1, 256, 3)    
-            imageio.imwrite("test.png", center_img)
+
+            if self.opt.use_initialization_from_rays:
+                lab = color.rgb2lab(fg_rays)
+                lab = lab[np.random.choice(lab.shape[0], lab.shape[0]//16)]
+                # kmeans = KMeans(n_clusters=5, random_state=0).fit(X)
+                clustering = KMeans(n_clusters=self.opt.color_cluster_num, random_state=0).fit(lab[:,1:])
+                center = clustering.cluster_centers_
+                center = np.concatenate([center[:,0:1]*0+50, center], axis=-1)
+                center = color.lab2rgb(center).astype(np.float32)
+                self.cluster_color = center
+                center_img = (center*255).astype(np.uint8)
+                center_img = center[:,None,None,:].repeat(256, 1).repeat(256, 2).reshape(-1, 256, 3)    
+                imageio.imwrite("test.png", center_img)
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
         if self.images is not None:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]

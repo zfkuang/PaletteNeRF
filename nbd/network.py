@@ -10,7 +10,7 @@ from .utils import normalize
 class NBDNetwork(NBDRenderer):
     def __init__(self,
                  opt,
-                 encoding="frequency",
+                 encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
                  num_layers=2,
@@ -64,7 +64,9 @@ class NBDNetwork(NBDRenderer):
                                 nn.ReLU(inplace=True)))
 
         self.dir_embed_net = nn.ModuleList(dir_embed_net)
-        # self.color_net = nn.Sequential(nn.Linear(hidden_dim, 3, bias=False), nn.relu())
+        # self.color_net = nn.Sequential(nn.Linear(hidden_dim, 3, bias=False), nn.ReLU())
+        if self.opt.guidance:
+            self.color_net = nn.Sequential(nn.Linear(hidden_dim, 3), nn.Sigmoid())
 
         self.mu_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
         self.omega_net = nn.Linear(self.geo_feat_dim, self.num_basis)
@@ -79,8 +81,6 @@ class NBDNetwork(NBDRenderer):
             else:
                 self.amplitude_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.opt.sg_num_basis), nn.Softplus())
                 self.radiance_net = nn.Sequential(nn.Linear(hidden_dim, self.num_basis-self.opt.sg_num_basis), nn.Softplus())
-            if self.opt.guidance:
-                self.color_net = nn.Sequential(nn.Linear(hidden_dim, 3), nn.Sigmoid())
             self.roughness_net = nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())
         elif not self.opt.viewdir_roughness:
             self.roughness_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis), nn.Sigmoid())
@@ -218,7 +218,7 @@ class NBDNetwork(NBDRenderer):
         if self.opt.guidance:
             h_color = self.color_net(h)
         else:
-            h_color = torch.zeros_like(h_mu)
+            h_color = torch.zeros_like(h_mu[...,:3])
 
         if self.opt.hybrid:
             if self.opt.single_radiance:
@@ -270,6 +270,9 @@ class NBDNetwork(NBDRenderer):
             {'params': self.basis_roughness, 'lr': lr}, 
             {'params': self.basis_color, 'lr': lr}, 
         ]
+        if self.opt.guidance:
+            params.append({'params': self.color_net.parameters(), 'lr': lr})
+
         if self.bg_radius > 0:
             params.append({'params': self.encoder_bg.parameters(), 'lr': lr})
             params.append({'params': self.bg_net.parameters(), 'lr': lr})

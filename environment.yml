@@ -24,4 +24,4 @@ dependencies:
     - PyMCubes
     - pysdf
     - dearpygui
-    - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
+    # - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch

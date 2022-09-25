@@ -638,8 +638,10 @@ class PaletteRenderer(nn.Module):
                 while head < N:
                     tail = min(head + max_ray_batch, N)
                     results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], **kwargs)
-                    results_.pop("weights_sum")
+                    # results_.pop("weights_sum")
                     for k, v in results_.items():
+                        if k == "weights_sum":
+                            v = v[..., None]
                         if k not in results.keys():
                             if results_[k].ndim == 2:
                                 results[k] = torch.empty((B, N), device=device)

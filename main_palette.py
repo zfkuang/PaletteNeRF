@@ -112,9 +112,6 @@ if __name__ == '__main__':
             bg_radius=opt.bg_radius,
         )
     
-
-
-    
     print(model)
 
     workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")

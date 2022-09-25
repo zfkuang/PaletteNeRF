@@ -697,10 +697,12 @@ class PaletteTrainer(object):
         pred_rgb = outputs['image']
         pred_depth = outputs['depth']
         pred_xyz = data['rays_o'] + data['rays_d'] * outputs['depth'][...,None]
+        pred_weight = outputs['weights_sum']
 
         return {'preds': pred_rgb,
                 'preds_depth': pred_depth,
-                'preds_xyz': pred_xyz}
+                'preds_xyz': pred_xyz,
+                'preds_weight': pred_weight}
 
     # [GUI] test on a single image
     def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1):
@@ -776,11 +778,11 @@ class PaletteTrainer(object):
                 preds = outputs['preds'][0]
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
-
-                depth_valid = (~torch.isnan(preds_depth)) & (preds_depth>0)
-                preds = preds[depth_valid]
-                preds_depth = preds_depth[depth_valid]
-                preds_xyz = preds_xyz[depth_valid]
+                preds_weight = outputs['preds_weight'][0]
+                valid = (preds_weight>5e-1)
+                preds = preds[valid]
+                preds_depth = preds_depth[valid]
+                preds_xyz = preds_xyz[valid]
 
                 if self.opt.color_space == 'linear':
                     preds = linear_to_srgb(preds)
@@ -836,6 +838,8 @@ class PaletteTrainer(object):
     def load_nerf_checkpoint(self, ckpt_path=None):
         checkpoint_dict = torch.load(ckpt_path, map_location=self.device)
         missing_keys, unexpected_keys = self.model.load_state_dict(checkpoint_dict['model'], strict=False)
+        
+        self.log("[INFO] unexpected_keys:", unexpected_keys)
         assert(len(unexpected_keys)==0)
 
         self.log("[INFO] loaded nerf model.")

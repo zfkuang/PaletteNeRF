@@ -144,3 +144,426 @@
 [INFO] loaded model.
 [INFO] load at epoch 300, global step 30000
 ==> Start Test, save results to ./results_palette/nerf_lego/version_1
+[INFO] Trainer: ngp | 2022-09-19_00-29-59 | cuda | fp16 | ./results_palette/nerf_lego/version_1
+[INFO] #parameters: 12249072
+[INFO] Loading ./results/nerf_lego/version_1/checkpoints/ngp_ep0300.pth ...
+[INFO] Trainer: ngp | 2022-09-19_00-30-54 | cuda | fp16 | ./results_palette/nerf_lego/version_1
+[INFO] #parameters: 12249072
+[INFO] Loading ./results/nerf_lego/version_1/checkpoints/ngp_ep0300.pth ...
+[INFO] Trainer: ngp | 2022-09-19_00-32-44 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] Trainer: ngp | 2022-09-19_00-32-54 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Trainer: ngp | 2022-09-19_00-33-13 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] Trainer: ngp | 2022-09-19_00-34-51 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] Trainer: ngp | 2022-09-19_00-42-57 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_00-46-24 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_00-46-54 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_00-47-36 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_00-48-16 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_00-57-37 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_01-00-00 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_01-08-45 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-23-20 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-33-24 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-34-07 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-35-21 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-36-23 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-38-36 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-39-53 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-40-02 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-40-17 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-41-08 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-43-10 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-43-38 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-43-59 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-45-37 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-46-07 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-46-29 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-47-14 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_02-48-05 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_15-00-38 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_15-23-24 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_15-24-09 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-19_15-44-25 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-19_15-56-58 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_21-31-26 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_21-31-52 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-19_21-50-27 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-19_23-36-09 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-37-30 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-37-44 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-39-52 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-43-24 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-52-21 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-52-54 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-53-31 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-53-51 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-55-49 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-57-02 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-57-37 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-19_23-59-37 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-00-23 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-01-30 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-02-05 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-02-26 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-03-19 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-04-42 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-05-21 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-05-57 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-06-30 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-07-40 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-09-01 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-09-44 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-16-52 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-20_00-22-00 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+==> Start Test, save results to .\results_palette\nerf_lego\version_1
+[INFO] Trainer: ngp | 2022-09-20_00-22-28 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-28-04 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-30-08 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-31-20 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-34-27 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-35-17 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-35-59 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-37-04 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-44-39 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-45-00 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-45-31 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-47-18 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-47-37 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-50-51 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-52-15 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-53-14 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-53-47 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_00-55-33 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000
+[INFO] Trainer: ngp | 2022-09-20_14-49-11 | cuda | fp16 | .\results_palette\nerf_lego\version_1
+[INFO] #parameters: 12249072
+[INFO] Loading .\results\nerf_lego\version_1\checkpoints\ngp_ep0300.pth ...
+[INFO] loaded model.
+[INFO] load at epoch 300, global step 30000

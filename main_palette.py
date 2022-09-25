@@ -3,8 +3,8 @@ import argparse
 
 from nerf.provider import NeRFDataset
 from palette.gui import PaletteGUI
-from palette.palette_extractor import PaletteExtractor
-from nerf.utils import *
+from palette.utils import PaletteRenderer
+from palette.utils import *
 
 from functools import partial
 from loss import huber_loss
@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
-    parser.add_argument('ckpt_path', type=str)
+    parser.add_argument('nerf_path', type=str)
     parser.add_argument('-O', action='store_true', help="equals --fp16 --cuda_ray --preload")
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--seed', type=int, default=0)
@@ -49,8 +49,8 @@ if __name__ == '__main__':
 
     ### GUI options
     parser.add_argument('--gui', action='store_true', help="start a GUI")
-    parser.add_argument('--W', type=int, default=1920, help="GUI width")
-    parser.add_argument('--H', type=int, default=1080, help="GUI height")
+    parser.add_argument('--W', type=int, default=960, help="GUI width")
+    parser.add_argument('--H', type=int, default=540, help="GUI height")
     parser.add_argument('--radius', type=float, default=5, help="default GUI camera radius from center")
     parser.add_argument('--fovy', type=float, default=50, help="default GUI camera fovy")
     parser.add_argument('--max_spp', type=int, default=64, help="GUI rendering max sample per pixel")
@@ -62,6 +62,15 @@ if __name__ == '__main__':
 
     ### Palette 
     parser.add_argument('--extract_palette', action='store_true', help="extract palette")
+    parser.add_argument("--num_basis", type=int, default=12, help='number of basis')
+    parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
+
+    # Adobe Hybrid options   
+    parser.add_argument("--lambda_sparsity", type=float, default=1, help='weight of sparsity loss')
+    parser.add_argument("--lambda_dir", type=float, default=0.01, help='weight of dir loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.01, help='weight of delta color loss')
+    parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
+    # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
     opt = parser.parse_args()
 
@@ -75,13 +84,13 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
-    from nerf.network import NeRFNetwork
+    from palette.network import PaletteNetwork
 
     print(opt)
     
     seed_everything(opt.seed)
 
-    model = NeRFNetwork(
+    model = PaletteNetwork(
         encoding="hashgrid",
         bound=opt.bound,
         cuda_ray=opt.cuda_ray,
@@ -93,15 +102,52 @@ if __name__ == '__main__':
     
     print(model)
 
-    workspace=os.path.dirname(os.path.dirname(opt.ckpt_path)).replace("results", "results_palette")
+    workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    trainer = PaletteExtractor('ngp', opt, model, device=device, 
-                            fp16=opt.fp16, workspace=workspace, ckpt_path=opt.ckpt_path)
-    
-    if opt.extract_palette:
-        train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
-        trainer.sample_rays(train_loader) # test and save video
 
-    if opt.gui:
-        gui = PaletteGUI(opt, trainer)
-        gui.render()
+    if opt.test:    
+        trainer = PaletteRenderer('palette', opt, model, device=device, 
+                fp16=opt.fp16, workspace=workspace, nerf_path=opt.nerf_path)
+        if opt.extract_palette:    
+            train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
+            trainer.sample_rays(train_loader) # test and save video
+        elif opt.gui:
+            assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
+            palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
+            hist_weight = np.load(os.path.join(workspace, 'hist_weights.npz'))['hist_weights']
+            gui = PaletteRenderer(opt, trainer, palette, hist_weight)
+            gui.render()
+    else:      
+        assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
+        criterion = torch.nn.MSELoss(reduction='none')
+        optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
+        # decay to 0.1 * init_lr at last iter step
+        scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
+        metrics = [PSNRMeter(), LPIPSMeter(device=device)]
+
+        trainer = PaletteRenderer('palette', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, 
+            ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
+            use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
+
+        train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
+        palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
+        hist_weight = np.load(os.path.join(workspace, 'hist_weights.npz'))['hist_weights']
+        renderer = PaletteRenderer(opt, trainer, palette, hist_weight)
+
+        if opt.use_initialization_from_rgbxy:
+            renderer.initialize_color(palette)
+
+        valid_loader = NeRFDataset(opt, device=device, type='val', downscale=1).dataloader()
+
+        max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
+        trainer.train(train_loader, valid_loader, max_epoch)
+
+        # also test
+        test_loader = NeRFDataset(opt, device=device, type='test', n_test=10).dataloader()
+        
+        if test_loader.has_gt:
+            trainer.evaluate(test_loader) # blender has gt, so evaluate it.
+        
+        trainer.test(test_loader, write_video=True) # test and save video
+        
+        trainer.save_mesh(resolution=256, threshold=10)

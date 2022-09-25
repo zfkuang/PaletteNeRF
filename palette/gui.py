@@ -4,7 +4,7 @@ import numpy as np
 import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
-from .utils import *
+from nerf.utils import *
 
 
 class OrbitCamera:
@@ -52,8 +52,8 @@ class OrbitCamera:
         self.center += 0.0005 * self.rot.as_matrix()[:3, :3] @ np.array([dx, dy, dz])
     
 
-class NeRFGUI:
-    def __init__(self, opt, trainer, train_loader=None, debug=True):
+class PaletteGUI:
+    def __init__(self, opt, trainer, palette, hist_weights, train_loader=None, debug=True):
         self.opt = opt # shared with the trainer's opt to support in-place modification of rendering parameters.
         self.W = opt.W
         self.H = opt.H
@@ -77,11 +77,20 @@ class NeRFGUI:
         self.downscale = 1
         self.train_steps = 16
 
+        self.load_palette(palette, hist_weights)
+
         dpg.create_context()
         self.register_dpg()
         self.test_step()
         
-
+    def load_palette(self, palette, hist_weights):
+        self.palette_mode = False
+        self.palette = torch.from_numpy(palette).float()
+        self.origin_palette = torch.from_numpy(palette).float()
+        self.hist_weights = torch.from_numpy(hist_weights).float()
+        self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
+        self.highlight_palette_id = 0
+        
     def __del__(self):
         dpg.destroy_context()
 
@@ -139,14 +148,24 @@ class NeRFGUI:
                 if downscale > self.downscale * 1.2 or downscale < self.downscale * 0.8:
                     self.downscale = downscale
 
+            output_buffer = self.prepare_buffer(outputs)
+            # recolor render buffer
+            # if self.palette_mode:
+            with torch.no_grad():
+                render_img = torch.from_numpy(output_buffer)[None,None,:,:,[2,1,0]]*2-1
+                weight = torch.nn.functional.grid_sample(self.hist_weights, render_img, mode='nearest', padding_mode='zeros', align_corners=True)
+                weight = weight.squeeze().permute(1, 2, 0)
+                render_img = torch.matmul(weight, self.palette)
+                output_buffer = render_img.reshape(output_buffer.shape).detach().numpy()
+
             if self.need_update:
-                self.render_buffer = self.prepare_buffer(outputs)
+                self.render_buffer = output_buffer
                 self.spp = 1
                 self.need_update = False
             else:
-                self.render_buffer = (self.render_buffer * self.spp + self.prepare_buffer(outputs)) / (self.spp + 1)
+                self.render_buffer = (self.render_buffer * self.spp + output_buffer) / (self.spp + 1)
                 self.spp += 1
-
+            
             dpg.set_value("_log_infer_time", f'{t:.4f}ms ({int(1000/t)} FPS)')
             dpg.set_value("_log_resolution", f'{int(self.downscale * self.W)}x{int(self.downscale * self.H)}')
             dpg.set_value("_log_spp", self.spp)
@@ -337,6 +356,45 @@ class NeRFGUI:
                     dpg.add_slider_float(label="z", width=150, min_value=-self.opt.bound, max_value=0, format="%.2f", default_value=-self.opt.bound, callback=callback_set_aabb, user_data=2)
                     dpg.add_slider_float(label="", width=150, min_value=0, max_value=self.opt.bound, format="%.2f", default_value=self.opt.bound, callback=callback_set_aabb, user_data=5)
                 
+            with dpg.collapsing_header(label="Palette", default_open=True):
+
+                def refresh_palette_color():
+                    highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
+                    dpg.set_value("_palette_color_editor", tuple(highlight_color))
+
+                def callback_set_palette_mode(sender, app_data):
+                    if self.palette_mode:
+                        self.palette_mode = False
+                    else:
+                        self.palette_mode = True
+                    self.need_update = True
+
+                dpg.add_checkbox(label="palette mode", default_value=self.palette_mode, callback=callback_set_palette_mode)
+
+                def callback_reset_palette(sender, app_data):
+                    self.palette = self.origin_palette
+                    refresh_palette_color()
+                    self.need_update = True
+                    
+                dpg.add_button(label="reset", tag="_button_reset_palette", callback=callback_reset_palette)
+                dpg.bind_item_theme("_button_reset_palette", theme_button)
+
+                def callback_set_palette_id(sender, app_data):
+                    self.highlight_palette_id = app_data                    
+                    refresh_palette_color()
+                    self.need_update = True
+
+                dpg.add_slider_int(label="Palette_ID", min_value=0, max_value=len(self.palette)-1, format="%d", 
+                                    default_value=self.highlight_palette_id, callback=callback_set_palette_id)
+                
+                def callback_change_palette(sender, app_data):
+                    self.palette[self.highlight_palette_id] = torch.tensor(app_data[:3], dtype=torch.float32) # only need RGB in [0, 1]
+                    refresh_palette_color()
+                    self.need_update = True
+
+                highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
+                dpg.add_color_edit(tuple(highlight_color), label="Palette Color", width=200, tag="_palette_color_editor", 
+                                    no_alpha=True, callback=callback_change_palette)
 
             # debug info
             if self.debug:
@@ -432,6 +490,4 @@ class NeRFGUI:
             if self.training:
                 self.train_step()
             self.test_step()
-            if self.opt.demo_palette:
-                self.load_palette()
             dpg.render_dearpygui_frame()

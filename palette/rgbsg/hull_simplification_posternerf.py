@@ -117,7 +117,7 @@ def Chao21_palette_extraction(
     np.savez(output_prefix+'-centers.npz', centers=centers_rgb)
 
     assert np.sum(center_weights) == original_count
-
+    
     palette_rgb = Hull_Simplification_posternerf(
         centers_rgb, pixel_counts=center_weights,
         output_prefix=output_prefix,
@@ -157,8 +157,10 @@ if __name__ == '__main__':
 
         palette_img = get_bigger_palette_to_show(palette_rgb)
         Image.fromarray((palette_img*255).round().astype(np.uint8)).save(output_prefix+'-palette.png')
-
+        
         np.savez(output_prefix+'-palette.npz', palette=palette_rgb)
         write_palette_txt(palette_rgb, path=output_prefix+'-palette.txt')
     else:
         print('failed to load input image')
+
+    

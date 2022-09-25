@@ -17,3 +17,5 @@ scipy
 lpips
 imageio
 cvxopt
+sklearn
+cython

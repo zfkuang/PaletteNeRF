@@ -7,3 +7,4 @@ OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=3 python main_palette.py \
 --bound 1 \
 --scale 0.8 \
 --dt_gamma 0 \
+--extract_palette

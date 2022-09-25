@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from encoding import get_encoder
 from activation import trunc_exp
-from .utils import PaletteRenderer
+from .renderer import PaletteRenderer
 from .utils import normalize
 
 class PaletteNetwork(PaletteRenderer):

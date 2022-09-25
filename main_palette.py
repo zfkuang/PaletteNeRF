@@ -3,7 +3,7 @@ import argparse
 
 from nerf.provider import NeRFDataset
 from palette.gui import PaletteGUI
-from palette.utils import PaletteRenderer
+from palette.utils import PaletteTrainer
 from palette.utils import *
 
 from functools import partial
@@ -70,6 +70,7 @@ if __name__ == '__main__':
     parser.add_argument("--lambda_dir", type=float, default=0.01, help='weight of dir loss')
     parser.add_argument("--lambda_delta", type=float, default=0.01, help='weight of delta color loss')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
+    parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
     opt = parser.parse_args()
@@ -84,21 +85,35 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
-    from palette.network import PaletteNetwork
-
     print(opt)
-    
     seed_everything(opt.seed)
+    
+    if opt.model_mode == "nerf":        
+        from nerf.network import NeRFNetwork
+        model = NeRFNetwork(
+            encoding="hashgrid",
+            bound=opt.bound,
+            cuda_ray=opt.cuda_ray,
+            density_scale=1,
+            min_near=opt.min_near,
+            density_thresh=opt.density_thresh,
+            bg_radius=opt.bg_radius,
+        )
+    elif opt.model_mode == "palette":
+        from palette.network import PaletteNetwork
+        model = PaletteNetwork(
+            opt=opt,
+            encoding="hashgrid",
+            bound=opt.bound,
+            cuda_ray=opt.cuda_ray,
+            density_scale=1,
+            min_near=opt.min_near,
+            density_thresh=opt.density_thresh,
+            bg_radius=opt.bg_radius,
+        )
+    
 
-    model = PaletteNetwork(
-        encoding="hashgrid",
-        bound=opt.bound,
-        cuda_ray=opt.cuda_ray,
-        density_scale=1,
-        min_near=opt.min_near,
-        density_thresh=opt.density_thresh,
-        bg_radius=opt.bg_radius,
-    )
+
     
     print(model)
 
@@ -106,7 +121,7 @@ if __name__ == '__main__':
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if opt.test:    
-        trainer = PaletteRenderer('palette', opt, model, device=device, 
+        trainer = PaletteTrainer('palette', opt, model, device=device, 
                 fp16=opt.fp16, workspace=workspace, nerf_path=opt.nerf_path)
         if opt.extract_palette:    
             train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
@@ -115,7 +130,7 @@ if __name__ == '__main__':
             assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
             palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
             hist_weight = np.load(os.path.join(workspace, 'hist_weights.npz'))['hist_weights']
-            gui = PaletteRenderer(opt, trainer, palette, hist_weight)
+            gui = PaletteGUI(opt, trainer, palette, hist_weight)
             gui.render()
     else:      
         assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
@@ -125,17 +140,16 @@ if __name__ == '__main__':
         scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
 
-        trainer = PaletteRenderer('palette', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, 
+        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
             use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
 
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
         palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
-        hist_weight = np.load(os.path.join(workspace, 'hist_weights.npz'))['hist_weights']
-        renderer = PaletteRenderer(opt, trainer, palette, hist_weight)
+        palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)
 
         if opt.use_initialization_from_rgbxy:
-            renderer.initialize_color(palette)
+            trainer.initialize_color(palette)
 
         valid_loader = NeRFDataset(opt, device=device, type='val', downscale=1).dataloader()
 

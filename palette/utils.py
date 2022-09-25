@@ -45,6 +45,9 @@ except ImportError:
     print("Loading module nbd_palette...")
     from .backend import _backend
 
+def normalize(tensor):
+    return tensor / (tensor.norm(dim=-1, keepdim=True)+1e-9)
+   
 def compute_RGB_histogram(
     colors_rgb: np.ndarray,
     weights: np.ndarray,
@@ -162,7 +165,7 @@ def palette_extraction(
     np.savez(os.path.join(output_dir, 'hist_weights.npz'), hist_weights=hist_weights)
 
 
-class PaletteRenderer(object):
+class PaletteTrainer(object):
     def __init__(self, 
                  name, # name of this experiment
                  opt, # extra conf
@@ -292,6 +295,7 @@ class PaletteRenderer(object):
                 self.log(f"[INFO] Loading {self.use_checkpoint} ...")
                 self.load_checkpoint(self.use_checkpoint)
         
+        self.nerf_path = nerf_path
         if self.nerf_path is not None:
             self.log(f"[INFO] Loading NeRF at {self.nerf_path} ...")
             self.load_nerf_checkpoint(self.nerf_path)
@@ -681,7 +685,7 @@ class PaletteRenderer(object):
     # moved out bg_color and perturb for more flexible control...
     def test_step(self, data, bg_color=None, perturb=False):  
 
-        rays_o = data['ra ys_o'] # [B, N, 3]
+        rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
         H, W = data['H'], data['W']
 
@@ -789,7 +793,7 @@ class PaletteRenderer(object):
             colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors, "xyzs":xyzs}
-            pal = palette_extraction(input_dict, save_path)
+            palette_extraction(input_dict, save_path)
           
     def load_checkpoint(self, checkpoint=None, model_only=False):
         if checkpoint is None:
@@ -836,7 +840,7 @@ class PaletteRenderer(object):
 
         self.log("[INFO] loaded nerf model.")
         if len(missing_keys) > 0:
-            self.log(f"Missing keys should befine.")        
+            self.log(f"Missing keys should be fine.")        
             
         if self.model.cuda_ray:
             if 'mean_count' in checkpoint_dict:

@@ -7,9 +7,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 import raymarching
-from .utils import custom_meshgrid
+from nerf.utils import custom_meshgrid
 from .utils import normalize
-from .utils import lab_to_rgb, luminance, linear_to_srgb, srgb_to_linear
+from nerf.utils import srgb_to_linear
 
 def isclose(x, val, threshold = 1e-6):
     return torch.abs(x - val) <= threshold
@@ -287,7 +287,7 @@ class PaletteRenderer(nn.Module):
         dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3
         dir_rgb_map = safe_pow(dir_rgb_map, 1/2.4).clamp(0, 1)
         dir_rgb_norm = color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-        dir_rgb_norm_map = (weights[:,:,None]*dir_rgb_norm).sum(dim=1) # N_rays, 3
+        dir_rgb_norm_map = (weights[:,:,None]*dir_rgb_norm).sum(dim=1) # N_rays, 1
 
         # calculate weight_sum (mask)
         weights_sum = weights.sum(dim=-1) # [N]
@@ -309,6 +309,11 @@ class PaletteRenderer(nn.Module):
         rgb_map = rgb_map.view(*prefix, 3)
         depth = depth.view(*prefix)
         basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
+        basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
+        omega_norm_map = omega_norm_map.view(*prefix)
+        dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
+        delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
+        dir_rgb_map = dir_rgb_map.view(*prefix, 3)
         basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
 
         # tmp: reg loss in mip-nerf 360

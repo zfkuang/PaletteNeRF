@@ -1,1 +1,1 @@
-from .palette import *
+from .utils import *

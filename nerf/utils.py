@@ -670,6 +670,8 @@ class Trainer(object):
         if write_video:
             all_preds = np.stack(all_preds, axis=0)
             all_preds_depth = np.stack(all_preds_depth, axis=0)
+            all_preds = all_preds[:, :all_preds.shape[1]//2*2, :all_preds.shape[2]//2*2]
+            all_preds_depth = all_preds_depth[:, :all_preds_depth.shape[1]//2*2, :all_preds_depth.shape[2]//2*2]
             imageio.mimwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds, fps=25, quality=8, macro_block_size=1)
             imageio.mimwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth, fps=25, quality=8, macro_block_size=1)
 
@@ -994,9 +996,6 @@ class Trainer(object):
         with torch.no_grad():
 
             for i, data in enumerate(loader):
-                
-                import pdb
-                pdb.set_trace()
 
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     preds, preds_depth = self.test_step(data)

@@ -30,6 +30,7 @@ class PaletteNetwork(PaletteRenderer):
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
         self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.encoder_palette, self.in_dim_palette = get_encoder(encoding, desired_resolution=2048 * bound)
 
         self.num_basis = opt.num_basis
 
@@ -72,7 +73,7 @@ class PaletteNetwork(PaletteRenderer):
         basis_net = []
         for l in range(num_layers):
             if l == 0:
-                in_dim = self.in_dim
+                in_dim = self.in_dim_palette
             else:
                 in_dim = hidden_dim
             
@@ -85,7 +86,7 @@ class PaletteNetwork(PaletteRenderer):
 
         self.basis_net = nn.ModuleList(basis_net)
         self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
-        self.omega_net = nn.Linear(self.geo_feat_dim, self.num_basis)
+        self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis), nn.ReLU())
 
         # background network
         if self.bg_radius > 0:
@@ -196,18 +197,19 @@ class PaletteNetwork(PaletteRenderer):
             d = d[mask]
             geo_feat = geo_feat[mask]
 
-        h = self.encoder(x, bound=self.bound)
+        h = self.encoder_palette(x, bound=self.bound)
         for l in range(self.num_layers):
-            h = self.sigma_net[l](h)
+            h = self.basis_net[l](h)
             if l != self.num_layers - 1:
                 h = F.relu(h, inplace=True)
 
         #sigma = F.relu(h[..., 0])
-        h_palette_geo_feat = h[..., 1:]
+        h_palette_geo_feat = h
 
         h_d_color = self.delta_color_net(h_palette_geo_feat) # B, N_B*3
         h_omega = self.omega_net(h_palette_geo_feat) # B, N_B
-        h_omega = F.softmax(h_omega, dim=-1) # B, N_B
+        # h_omega = F.softmax(h_omega, dim=-1) # B, N_B
+        # h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
 
         d = self.encoder_dir(d)
         h = torch.cat([d, h_palette_geo_feat], dim=-1)
@@ -235,13 +237,14 @@ class PaletteNetwork(PaletteRenderer):
 
         params = [
             {'params': self.encoder.parameters(), 'lr': lr},
+            {'params': self.encoder_palette.parameters(), 'lr': lr},
             {'params': self.sigma_net.parameters(), 'lr': lr},
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
             {'params': self.delta_color_net.parameters(), 'lr': lr}, 
             {'params': self.omega_net.parameters(), 'lr': lr}, 
+            {'params': self.basis_color, 'lr': lr}, 
             # {'params': self.basis_roughness, 'lr': lr}, 
-            # {'params': self.basis_color, 'lr': lr}, 
         ]
 
         if self.bg_radius > 0:

@@ -212,6 +212,7 @@ class PaletteTrainer(object):
         self.scheduler_update_every_step = scheduler_update_every_step
         self.device = device if device is not None else torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
         self.console = Console()
+        self.val_len = 10
 
         model.to(self.device)
         if self.world_size > 1:
@@ -477,8 +478,6 @@ class PaletteTrainer(object):
                 metric.clear()
 
         self.model.train()
-        if self.opt.guidance:
-            self.model.color_weight = max(0, 1.0 - self.epoch/self.opt.max_guide_epoch)
     
         # distributedSampler: must call set_epoch() to shuffle indices across multiple epochs
         # ref: https://pytorch.org/docs/stable/data.html
@@ -570,14 +569,18 @@ class PaletteTrainer(object):
             self.ema.store()
             self.ema.copy_to()
 
+        data_len = min(len(loader), self.val_len)
+
         if self.local_rank == 0:
-            pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+            pbar = tqdm.tqdm(total=data_len * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
 
         with torch.no_grad():
             self.local_step = 0
 
             for data in loader:    
                 self.local_step += 1
+                if self.local_step == data_len+1:
+                    break
 
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     preds, preds_depth, truths, loss, outputs = self.eval_step(data)
@@ -628,6 +631,7 @@ class PaletteTrainer(object):
                     pred_depth = preds_depth[0].detach().cpu().numpy()
                     pred_depth = (pred_depth * 255).astype(np.uint8)
                     pred_dir_color = outputs['dir_rgb'][0].detach().cpu().numpy()
+                    pred_dir_color = pred_dir_color.reshape(pred.shape[0], pred.shape[1], 3)
                     pred_dir_color = (pred_dir_color.clip(0,1) * 255).astype(np.uint8)
 
                     pred_basis_img = []
@@ -640,9 +644,9 @@ class PaletteTrainer(object):
                         pred_basis_acc.append(basis_acc.detach().cpu().numpy())
                         basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
                         basis_color = basis_color.clamp(0, 1)
-                        basis_color = basis_color/(basis_color.norm(dim=-1, keepdim=True)+1e-6).detach()
+                        # basis_color = basis_color/(basis_color.norm(dim=-1, keepdim=True)+1e-6).detach()
                         # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
-                        pred_basis_color.append(basis_color.detach().cpu().numpy())
+                        pred_basis_color.append(linear_to_srgb(basis_color).detach().cpu().numpy())
 
                     pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
                     pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
@@ -796,7 +800,69 @@ class PaletteTrainer(object):
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors, "xyzs":xyzs}
             palette_extraction(input_dict, save_path)
-          
+
+    def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
+
+        if name is None:
+            name = f'{self.name}_ep{self.epoch:04d}'
+
+        state = {
+            'epoch': self.epoch,
+            'global_step': self.global_step,
+            'stats': self.stats,
+        }
+
+        if self.model.cuda_ray:
+            state['mean_count'] = self.model.mean_count
+            state['mean_density'] = self.model.mean_density
+
+        if full:
+            state['optimizer'] = self.optimizer.state_dict()
+            state['lr_scheduler'] = self.lr_scheduler.state_dict()
+            state['scaler'] = self.scaler.state_dict()
+            if self.ema is not None:
+                state['ema'] = self.ema.state_dict()
+
+        if not best:
+
+            state['model'] = self.model.state_dict()
+
+            file_path = f"{self.ckpt_path}/{name}.pth"
+
+            if remove_old:
+                self.stats["checkpoints"].append(file_path)
+
+                if len(self.stats["checkpoints"]) > self.max_keep_ckpt:
+                    old_ckpt = self.stats["checkpoints"].pop(0)
+                    if os.path.exists(old_ckpt):
+                        os.remove(old_ckpt)
+
+            torch.save(state, file_path)
+
+        else:    
+            if len(self.stats["results"]) > 0:
+                if self.stats["best_result"] is None or self.stats["results"][-1] < self.stats["best_result"]:
+                    self.log(f"[INFO] New best result: {self.stats['best_result']} --> {self.stats['results'][-1]}")
+                    self.stats["best_result"] = self.stats["results"][-1]
+
+                    # save ema results 
+                    if self.ema is not None:
+                        self.ema.store()
+                        self.ema.copy_to()
+
+                    state['model'] = self.model.state_dict()
+
+                    # we don't consider continued training from the best ckpt, so we discard the unneeded density_grid to save some storage (especially important for dnerf)
+                    if 'density_grid' in state['model']:
+                        del state['model']['density_grid']
+
+                    if self.ema is not None:
+                        self.ema.restore()
+                    
+                    torch.save(state, self.best_path)
+            else:
+                self.log(f"[WARN] no evaluated results found, skip saving best checkpoint.")
+            
     def load_checkpoint(self, checkpoint=None, model_only=False):
         if checkpoint is None:
             checkpoint_list = sorted(glob.glob(f'{self.ckpt_path}/{self.name}_ep*.pth'))

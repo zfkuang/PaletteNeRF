@@ -22,6 +22,7 @@ if __name__ == '__main__':
 
     ### training options
     parser.add_argument('--iters', type=int, default=30000, help="training iters")
+    parser.add_argument('--ckpt', type=str, default='latest')
     parser.add_argument('--lr', type=float, default=1e-2, help="initial learning rate")
     parser.add_argument('--num_rays', type=int, default=4096, help="num rays sampled per image for each training step")
     parser.add_argument('--cuda_ray', action='store_true', help="use CUDA raymarching instead of pytorch")
@@ -66,9 +67,9 @@ if __name__ == '__main__':
     parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
 
     # Adobe Hybrid options   
-    parser.add_argument("--lambda_sparsity", type=float, default=1, help='weight of sparsity loss')
-    parser.add_argument("--lambda_dir", type=float, default=0.01, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.01, help='weight of delta color loss')
+    parser.add_argument("--lambda_sparsity", type=float, default=0.002, help='weight of sparsity loss')
+    parser.add_argument("--lambda_dir", type=float, default=0.2, help='weight of dir loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.1, help='weight of delta color loss')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
@@ -115,6 +116,7 @@ if __name__ == '__main__':
     print(model)
 
     workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
+    os.makedirs(workspace, exist_ok=True)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if opt.test:    
@@ -131,22 +133,28 @@ if __name__ == '__main__':
             gui.render()
     else:      
         assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
+        palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
+        if opt.use_initialization_from_rgbxy:
+            model.initialize_color(palette)
+
         criterion = torch.nn.MSELoss(reduction='none')
         optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
         # decay to 0.1 * init_lr at last iter step
         scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
 
-        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=opt.workspace, optimizer=optimizer, criterion=criterion, 
+        workspace = os.path.dirname(workspace)
+        workspace_list = glob.glob("%s/version*"%workspace)
+        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+        workspace = "%s/version_%d"%(workspace, 1+workspace_list)
+
+        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
             use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
 
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
-        palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
-        palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)
+        # palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)
 
-        if opt.use_initialization_from_rgbxy:
-            trainer.initialize_color(palette)
 
         valid_loader = NeRFDataset(opt, device=device, type='val', downscale=1).dataloader()
 

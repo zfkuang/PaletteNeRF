@@ -11,6 +11,9 @@ from nerf.utils import custom_meshgrid
 from .utils import normalize
 from nerf.utils import srgb_to_linear
 
+def cos_distance(x, y):
+    return 1-(normalize(x) * normalize(y)).sum(dim=-1)
+
 def isclose(x, val, threshold = 1e-6):
     return torch.abs(x - val) <= threshold
 
@@ -268,22 +271,24 @@ class PaletteRenderer(nn.Module):
 
         basis_rgb = omega*(basis_color+d_color) # N_rays, N_sample, N_basis, 3
 
-        omega_norm = 1-1/(omega[...,0]**2).sum(dim=-1, keepdim=True) # N_rays, N_sample, 1
-        omega_norm_map = (weights[:,:,None].detach()*omega_norm).sum(dim=1) # N_rays, N_B1
+        omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
+        omega_norm_map = (weights[:,:,None].detach()*omega_norm).sum(dim=1) # N_rays, 1
         omega_norm_map = omega_norm_map.view(*prefix, 1)
 
         rgb = basis_rgb.sum(dim=-2) + color # (N_rays, N_samples_, 3)
         rgb_map = (weights[:,:,None]*rgb).sum(dim=1) # N_rays, 3
-        rgb_map = safe_pow(rgb_map, 1/2.4)
+        if self.opt.color_space != "linear":
+            rgb_map = safe_pow(rgb_map, 1/2.4)
         
         basis_rgb = basis_rgb.reshape(N, basis_rgb.shape[1], -1) # (N_rays, N_samples_, N_basis*3)
         basis_rgb_map = (weights[:,:,None]*basis_rgb).sum(dim=1) # N_rays, N_basis*3
         basis_rgb_map = safe_pow(basis_rgb_map, 1/2.4).clamp(0, 1)
         basis_acc_map = (weights[:,:,None].detach()*omega[...,0]).sum(dim=1)
 
-        delta_rgb_norm = d_color.norm(dim=-1).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+        # delta_rgb_norm = d_color.norm(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+        delta_rgb_norm = cos_distance((basis_color+d_color), basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
         delta_rgb_norm_map = (weights[:,:,None]*delta_rgb_norm).sum(dim=1) # N_rays, 1
-
+        
         dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3
         dir_rgb_map = safe_pow(dir_rgb_map, 1/2.4).clamp(0, 1)
         dir_rgb_norm = color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
@@ -640,14 +645,14 @@ class PaletteRenderer(nn.Module):
                     results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], **kwargs)
                     # results_.pop("weights_sum")
                     for k, v in results_.items():
-                        if k == "weights_sum":
-                            v = v[..., None]
+                        if k == 'weights_sum':
+                            v = v[None,...]
                         if k not in results.keys():
-                            if results_[k].ndim == 2:
+                            if v.ndim == 2:
                                 results[k] = torch.empty((B, N), device=device)
                             else:
-                                results[k] = torch.empty((B, N, results_[k].shape[-1]), device=device)
-                        results[k][b:b+1, head:tail] = results_[k]
+                                results[k] = torch.empty((B, N, v.shape[-1]), device=device)
+                        results[k][b:b+1, head:tail] = v
                     head += max_ray_batch
             
         else:

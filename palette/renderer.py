@@ -127,7 +127,7 @@ class PaletteRenderer(nn.Module):
             self.mean_count = 0
             self.local_step = 0
 
-    def initialize_color(self, color_list=None):
+    def initialize_color(self, color_list=None, hist_weights=None):
         if color_list is None:
             if self.basis_color is None:
                 self.basis_color = torch.zeros([self.num_basis, 3]) + 0.5
@@ -138,7 +138,12 @@ class PaletteRenderer(nn.Module):
             for i, color in enumerate(color_list):
                 self.basis_color[i::color_list.shape[0]] = srgb_to_linear(torch.FloatTensor(color))
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
-            
+
+        if hist_weights is not None:
+            self.hist_weights = torch.from_numpy(hist_weights).float()
+            self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
+            self.hist_weights = nn.Parameter(self.hist_weights, requires_grad=False)
+
     def forward(self, x, d):
         raise NotImplementedError()
 
@@ -269,7 +274,11 @@ class PaletteRenderer(nn.Module):
         if self.freeze_basis_color:
             basis_color = basis_color.detach()
 
-        basis_rgb = omega*(basis_color+d_color) # N_rays, N_sample, N_basis, 3
+        if self.opt.multiply_delta:
+            final_color = (basis_color*d_color).clamp(0, 1)
+        else:
+            final_color = (basis_color+d_color).clamp(0, 1)
+        basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
 
         omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
         omega_norm_map = (weights[:,:,None].detach()*omega_norm).sum(dim=1) # N_rays, 1
@@ -286,7 +295,7 @@ class PaletteRenderer(nn.Module):
         basis_acc_map = (weights[:,:,None].detach()*omega[...,0]).sum(dim=1)
 
         # delta_rgb_norm = d_color.norm(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-        delta_rgb_norm = cos_distance((basis_color+d_color), basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+        delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
         delta_rgb_norm_map = (weights[:,:,None]*delta_rgb_norm).sum(dim=1) # N_rays, 1
         
         dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3

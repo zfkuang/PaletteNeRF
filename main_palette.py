@@ -1,7 +1,7 @@
 import torch
 import argparse
 
-from nerf.provider import NeRFDataset
+from palette.provider import NeRFDataset
 from palette.gui import PaletteGUI
 from palette.utils import PaletteTrainer
 from palette.utils import *
@@ -67,14 +67,20 @@ if __name__ == '__main__':
     parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
 
     # Adobe Hybrid options   
+    parser.add_argument('--use_normalized_palette', action='store_true', help="use_normalized palette")
+    parser.add_argument('--continue_training', action='store_true', help="continue training")
+    parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
     parser.add_argument("--lambda_sparsity", type=float, default=0.002, help='weight of sparsity loss')
-    parser.add_argument("--lambda_dir", type=float, default=0.2, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.1, help='weight of delta color loss')
+    parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.01, help='weight of delta color loss')
+    parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
+    parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
     opt = parser.parse_args()
+
 
     if opt.O:
         opt.fp16 = True
@@ -85,6 +91,18 @@ if __name__ == '__main__':
         opt.error_map = False # do not use error_map if use patch-based training
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
+
+    workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
+    if opt.use_normalized_palette:
+        palette_workspace = workspace.replace("version", "normalized_version")
+    else:
+        palette_workspace = workspace
+    os.makedirs(workspace, exist_ok=True)
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    if opt.use_initialization_from_rgbxy:
+        palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
+        opt.num_basis = palette.shape[0]
 
     print(opt)
     seed_everything(opt.seed)
@@ -115,10 +133,6 @@ if __name__ == '__main__':
     
     print(model)
 
-    workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
-    os.makedirs(workspace, exist_ok=True)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
     if opt.test:    
         trainer = PaletteTrainer('palette', opt, model, device=device, 
                 fp16=opt.fp16, workspace=workspace, nerf_path=opt.nerf_path)
@@ -126,16 +140,18 @@ if __name__ == '__main__':
             train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
             trainer.sample_rays(train_loader) # test and save video
         elif opt.gui:
-            assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
-            palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
-            hist_weight = np.load(os.path.join(workspace, 'hist_weights.npz'))['hist_weights']
-            gui = PaletteGUI(opt, trainer, palette, hist_weight)
+            assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
+            palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
+            hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
+            gui = PaletteGUI(opt, trainer, palette, hist_weights)
             gui.render()
     else:      
-        assert(os.path.exists(os.path.join(workspace, 'palette.npz')))
-        palette = np.load(os.path.join(workspace, 'palette.npz'))['palette']
+        assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
+        palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
+        hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
         if opt.use_initialization_from_rgbxy:
-            model.initialize_color(palette)
+            model.initialize_color(palette, hist_weights)
+            assert(palette.shape[0] == opt.num_basis)
 
         criterion = torch.nn.MSELoss(reduction='none')
         optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
@@ -146,7 +162,7 @@ if __name__ == '__main__':
         workspace = os.path.dirname(workspace)
         workspace_list = glob.glob("%s/version*"%workspace)
         workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-        workspace = "%s/version_%d"%(workspace, 1+workspace_list)
+        workspace = "%s/version_%d"%(workspace, (1-opt.continue_training)+workspace_list)
 
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 

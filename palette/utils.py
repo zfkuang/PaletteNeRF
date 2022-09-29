@@ -45,6 +45,15 @@ except ImportError:
     print("Loading module nbd_palette...")
     from .backend import _backend
 
+def get_palette_weight_with_hist(rgb, hist_weights):
+    assert(hist_weights.ndim == 5)
+    rgb_shape = rgb.shape
+    rgb = rgb.reshape(-1, 3)
+    rgb = rgb[None,None,None,:,[2,1,0]]*2-1
+    weight = torch.nn.functional.grid_sample(hist_weights, rgb, mode='bilinear', padding_mode='zeros', align_corners=True)
+    weight = weight.squeeze().permute(1, 0)
+    return weight.reshape(rgb_shape[:-1] + (-1,))
+
 def normalize(tensor):
     return tensor / (tensor.norm(dim=-1, keepdim=True)+1e-9)
    
@@ -90,9 +99,10 @@ def palette_extraction(
     inputs: dict,
     output_dir: str,
     tau: float = 8e-3,
-    palette_size: int = 6
+    palette_size = None,
+    use_normalize = False
 ):
-    assert palette_size >= 4 ## convex hull should have at least 4 vertices
+    assert palette_size is None or palette_size >= 4 ## convex hull should have at least 4 vertices
     print(f'extracting palette with {palette_size} colors')
 
     if not os.path.exists(output_dir):
@@ -151,9 +161,16 @@ def palette_extraction(
         target_size=palette_size)
 
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
+    if use_normalize:
+        hist_rgb = hist_rgb+0.05
+        hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
+        hist_rgb = hist_rgb / hist_rgb_norm
+
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette
-    hist_weights = hist_weights.reshape([32,32,32,6])
+    hist_weights = hist_weights.reshape([32,32,32,palette_rgb.shape[0]])
+    if use_normalize:
+        hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
     ## Generate weight
 
     ## save palette
@@ -163,6 +180,7 @@ def palette_extraction(
     write_palette_txt(palette_rgb, output_prefix+'-palette.txt')
     np.savez(os.path.join(output_dir, 'palette.npz'), palette=palette_rgb)
     np.savez(os.path.join(output_dir, 'hist_weights.npz'), hist_weights=hist_weights)
+
 
 
 class PaletteTrainer(object):
@@ -345,12 +363,13 @@ class PaletteTrainer(object):
             gt_rgb = images[..., :3] * images[..., 3:] + bg_color * (1 - images[..., 3:])
         else:
             gt_rgb = images
-
+        gt_weights = get_palette_weight_with_hist(gt_rgb, self.model.hist_weights).detach()
+        
         # outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, **vars(self.opt))
         outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=True, **vars(self.opt))
-    
+        
         pred_rgb = outputs['image']
-
+        
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
         # patch-based rendering
@@ -364,13 +383,23 @@ class PaletteTrainer(object):
             # LPIPS loss [not useful...]
             loss = loss + 1e-3 * self.criterion_lpips(pred_rgb, gt_rgb)
 
+        loss_dict = {}
         pred_omega = outputs['omega_norm']
         sparsity_loss = pred_omega.mean()
         pred_delta_color = outputs['delta_norm']
         delta_loss = pred_delta_color.mean()
         pred_dir_color = outputs['dir_norm']
         dir_loss = pred_dir_color.mean()
+        pred_weights = outputs['basis_acc']
+        weights_guide_loss = ((gt_weights-pred_weights)**2).mean()
         loss = loss + self.opt.lambda_sparsity * sparsity_loss + self.opt.lambda_delta * delta_loss + self.opt.lambda_dir * dir_loss
+        loss = loss + weights_guide_loss * self.lambda_weight
+
+        loss_dict['loss_sparsity'] =  self.opt.lambda_sparsity * sparsity_loss
+        loss_dict['loss_delta'] =  self.opt.lambda_delta * delta_loss
+        loss_dict['loss_dir'] =  self.opt.lambda_dir * dir_loss
+        loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
+        loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
 
         # special case for CCNeRF's rank-residual training
         if len(loss.shape) == 3: # [K, B, N]
@@ -407,7 +436,7 @@ class PaletteTrainer(object):
         # loss_ws = - 1e-1 * pred_weights_sum * torch.log(pred_weights_sum) # entropy to encourage weights_sum to be 0 or 1.
         # loss = loss + loss_ws.mean()
 
-        return pred_rgb, gt_rgb, loss
+        return pred_rgb, gt_rgb, loss, loss_dict
 
     def eval_step(self, data):
 
@@ -425,6 +454,7 @@ class PaletteTrainer(object):
             gt_rgb = images[..., :3] * images[..., 3:] + bg_color * (1 - images[..., 3:])
         else:
             gt_rgb = images
+        gt_weights = get_palette_weight_with_hist(gt_rgb, self.model.hist_weights).detach()
         
         outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=False, **vars(self.opt))
 
@@ -433,7 +463,7 @@ class PaletteTrainer(object):
 
         loss = self.criterion(pred_rgb, gt_rgb).mean()
 
-        return pred_rgb, pred_depth, gt_rgb, loss, outputs
+        return pred_rgb, pred_depth, gt_rgb, gt_weights, loss, outputs
     
     def train(self, train_loader, valid_loader, max_epochs):
         if self.use_tensorboardX and self.local_rank == 0:
@@ -449,6 +479,7 @@ class PaletteTrainer(object):
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
 
+            self.lambda_weight = self.opt.lambda_weight * max(0, (1 - epoch/self.opt.lweight_decay_epoch))
             self.train_one_epoch(train_loader)
 
             if self.workspace is not None and self.local_rank == 0:
@@ -502,7 +533,7 @@ class PaletteTrainer(object):
             self.optimizer.zero_grad()
 
             with torch.cuda.amp.autocast(enabled=self.fp16):
-                preds, truths, loss = self.train_step(data)
+                preds, truths, loss, loss_dict = self.train_step(data)
          
             self.scaler.scale(loss).backward()
             self.scaler.step(self.optimizer)
@@ -521,6 +552,8 @@ class PaletteTrainer(object):
                         
                 if self.use_tensorboardX:
                     self.writer.add_scalar("train/loss", loss_val, self.global_step)
+                    for k, v in loss_dict.items():
+                        self.writer.add_scalar("train/%s"%k, v, self.global_step)
                     self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]['lr'], self.global_step)
 
                 if self.scheduler_update_every_step:
@@ -583,7 +616,7 @@ class PaletteTrainer(object):
                     break
 
                 with torch.cuda.amp.autocast(enabled=self.fp16):
-                    preds, preds_depth, truths, loss, outputs = self.eval_step(data)
+                    preds, preds_depth, truths, gt_weights, loss, outputs = self.eval_step(data)
 
                 # all_gather/reduce the statistics (NCCL only support all_*)
                 if self.world_size > 1:
@@ -614,6 +647,7 @@ class PaletteTrainer(object):
                     # save image
                     save_path = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_rgb.png')
                     save_path_depth = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_depth.png')
+                    save_path_gt_weights = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_acc_guide.png')
                     
                     save_path_basis_img = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_img.png')
                     save_path_basis_acc = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_acc.png')
@@ -625,6 +659,10 @@ class PaletteTrainer(object):
 
                     if self.opt.color_space == 'linear':
                         preds = linear_to_srgb(preds)
+
+                    gt_weights = gt_weights[0].detach().cpu().numpy()
+                    gt_weights = (gt_weights.clip(0,1) * 255).astype(np.uint8)
+                    gt_weights = gt_weights.transpose(0, 2, 1).reshape(gt_weights.shape[0], -1)
 
                     pred = preds[0].detach().cpu().numpy()
                     pred = (pred.clip(0,1) * 255).astype(np.uint8)
@@ -658,6 +696,7 @@ class PaletteTrainer(object):
                     cv2.imwrite(save_path_dir_color, cv2.cvtColor(pred_dir_color, cv2.COLOR_RGB2BGR))
                     
                     cv2.imwrite(save_path, cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(save_path_gt_weights, gt_weights)
                     cv2.imwrite(save_path_depth, pred_depth)
 
                     pbar.set_description(f"loss={loss_val:.4f} ({total_loss/self.local_step:.4f})")
@@ -691,7 +730,6 @@ class PaletteTrainer(object):
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
-        H, W = data['H'], data['W']
 
         if bg_color is not None:
             bg_color = bg_color.to(self.device)
@@ -707,6 +745,110 @@ class PaletteTrainer(object):
                 'preds_depth': pred_depth,
                 'preds_xyz': pred_xyz,
                 'preds_weight': pred_weight}
+
+    def test(self, loader, save_path=None, name=None, write_video=True):
+
+        if save_path is None:
+            save_path = os.path.join(self.workspace, 'results')
+
+        if name is None:
+            name = f'{self.name}_ep{self.epoch:04d}'
+
+        os.makedirs(save_path, exist_ok=True)
+        
+        self.log(f"==> Start Test, save results to {save_path}")
+
+        pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+        self.model.eval()
+
+        if write_video:
+            all_preds = []
+            all_preds_depth = []
+            all_preds_basis_img = []
+            all_preds_basis_acc = []
+            all_preds_basis_color = []
+            all_preds_dir_color = []
+
+        with torch.no_grad():
+
+            for i, data in enumerate(loader):
+                
+                H, W = data['H'], data['W']
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    outputs = self.test_step(data)
+
+                if self.opt.color_space == 'linear':
+                    preds = linear_to_srgb(preds)
+
+                pred = outputs['preds'][0].reshape(H, W, 3).detach().cpu().numpy()
+                pred = (pred.clip(0, 1) * 255).astype(np.uint8)
+
+                pred_depth = outputs['preds_depth'][0].reshape(H, W).detach().cpu().numpy()
+                pred_depth = (pred_depth * 255).astype(np.uint8)
+                
+                pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3).detach().cpu().numpy()
+                pred_basis_dir_color = (pred_basis_dir_color.clip(0, 1) * 255).astype(np.uint8)
+
+                pred_basis_img = []
+                pred_basis_acc = []
+                pred_basis_color = []
+
+                for i in range(self.opt.num_basis):
+                    basis_img = outputs['basis_rgb'][0,:,i*3:(i+1)*3].reshape(H, W, 3)
+                    pred_basis_img.append(basis_img.detach().cpu().numpy())                        
+                    basis_acc = outputs['basis_acc'][0,:,i:(i+1)].reshape(H, W)
+                    pred_basis_acc.append(basis_acc.detach().cpu().numpy())
+                    basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
+                    basis_color = basis_color.clamp(0, 1)
+                    # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
+                    pred_basis_color.append(basis_color.detach().cpu().numpy())
+
+                pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
+                pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
+                pred_basis_color = (np.concatenate(pred_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
+
+                if write_video:
+                    all_preds.append(pred)
+                    all_preds_depth.append(pred_depth)
+                    all_preds_basis_img.append(pred_basis_img)
+                    all_preds_basis_acc.append(pred_basis_acc)
+                    all_preds_basis_color.append(pred_basis_color)
+                    all_preds_dir_color.append(pred_basis_dir_color)
+
+                else:
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_rgb.png'), cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_depth.png'), pred_depth)
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_img.png'), pred_basis_img)
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_acc.png'), pred_basis_acc)
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_color.png'), pred_basis_color)
+                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_dir_color.png'), all_preds_dir_color)
+
+                pbar.update(loader.batch_size)
+        
+        if write_video:
+            all_preds = np.stack(all_preds, axis=0)
+            all_preds_depth = np.stack(all_preds_depth, axis=0)
+            all_preds_basis_img = np.stack(all_preds_basis_img, axis=0)
+            all_preds_basis_acc = np.stack(all_preds_basis_acc, axis=0)
+            all_preds_basis_color = np.stack(all_preds_basis_color, axis=0)
+            all_preds_dir_color = np.stack(all_preds_dir_color, axis=0)
+
+            _, W_img = all_preds_basis_img.shape[1:3]
+            W_img = W_img//self.opt.num_basis
+            _, W_p = all_preds_basis_color.shape[1:3]
+            W_p = W_p//self.opt.num_basis
+            imageio.mimwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color, fps=25, quality=8, macro_block_size=1)
+            imageio.mimwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color, fps=25, quality=8, macro_block_size=1)
+            for i in range(self.opt.num_basis):
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
+                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)], fps=25, quality=8, macro_block_size=1)
+
+        self.log(f"==> Finished Test.")
 
     # [GUI] test on a single image
     def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1):
@@ -755,7 +897,7 @@ class PaletteTrainer(object):
 
         return outputs
  
-    def sample_rays(self, loader, save_path=None, name=None, write_video=True):
+    def sample_rays(self, loader, save_path=None, name=None):
 
         if save_path is None:
             save_path = self.workspace
@@ -771,6 +913,7 @@ class PaletteTrainer(object):
         self.model.eval()
 
         all_preds = []
+        all_preds_norm = []
         all_preds_xyz = []
         all_preds_depth = []
 
@@ -779,27 +922,36 @@ class PaletteTrainer(object):
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     outputs = self.test_step(data)
                     
-                preds = outputs['preds'][0]
+                preds = data['images'][...,:3].reshape(-1, 3)
+                preds_norm = preds+0.05
+                preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
                 preds_weight = outputs['preds_weight'][0]
                 valid = (preds_weight>5e-1)
                 preds = preds[valid]
+                preds_norm = preds_norm[valid]
                 preds_depth = preds_depth[valid]
                 preds_xyz = preds_xyz[valid]
 
                 if self.opt.color_space == 'linear':
                     preds = linear_to_srgb(preds)
+                    preds_norm = linear_to_srgb(preds_norm)
 
                 all_preds.append(preds)
                 all_preds_xyz.append(preds_xyz)
                 all_preds_depth.append(preds_depth)
+                all_preds_norm.append(preds_norm)
                 pbar.update(loader.batch_size)
             
             colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors, "xyzs":xyzs}
             palette_extraction(input_dict, save_path)
+            colors_norm = torch.cat(all_preds_norm, dim=0).detach().cpu().numpy()
+            xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
+            input_dict = {"colors":colors_norm, "xyzs":xyzs}
+            palette_extraction(input_dict, save_path.replace("version", "normalized_version"), use_normalize=True)
 
     def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
 

@@ -1,8 +1,8 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=4 python main_palette.py \
-../data/nerf_synthetic/lego \
-./results/nerf_lego/version_3/checkpoints/ngp_ep0300.pth \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
+../blender_dataset/kitti \
+./results/nerf_kitti/version_2/checkpoints/ngp_ep0300.pth \
 --fp16 \
 --preload \
 --bound 4 \

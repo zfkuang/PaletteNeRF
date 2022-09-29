@@ -85,8 +85,11 @@ class PaletteNetwork(PaletteRenderer):
             basis_net.append(nn.Linear(in_dim, out_dim, bias=False))
 
         self.basis_net = nn.ModuleList(basis_net)
-        self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
-        self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis), nn.ReLU())
+        if self.opt.multiply_delta:
+            self.delta_color_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis*3), nn.ELU())
+        else:
+            self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
+        self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis, bias=False), nn.Softplus())
 
         # background network
         if self.bg_radius > 0:
@@ -206,10 +209,13 @@ class PaletteNetwork(PaletteRenderer):
         #sigma = F.relu(h[..., 0])
         h_palette_geo_feat = h
 
-        h_d_color = self.delta_color_net(h_palette_geo_feat) # B, N_B*3
-        h_omega = self.omega_net(h_palette_geo_feat) # B, N_B
+        if self.opt.multiply_delta:
+            h_d_color = self.delta_color_net(h_palette_geo_feat)+1 # B, N_B*3
+        else:
+            h_d_color = self.delta_color_net(h_palette_geo_feat) # B, N_B*3
+        h_omega = self.omega_net(h_palette_geo_feat)+0.05 # B, N_B
         # h_omega = F.softmax(h_omega, dim=-1) # B, N_B
-        # h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
+        h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
 
         d = self.encoder_dir(d)
         h = torch.cat([d, h_palette_geo_feat], dim=-1)
@@ -244,6 +250,7 @@ class PaletteNetwork(PaletteRenderer):
             {'params': self.delta_color_net.parameters(), 'lr': lr}, 
             {'params': self.omega_net.parameters(), 'lr': lr}, 
             {'params': self.basis_color, 'lr': lr}, 
+            {'params': self.hist_weights, 'lr': lr}, 
             # {'params': self.basis_roughness, 'lr': lr}, 
         ]
 

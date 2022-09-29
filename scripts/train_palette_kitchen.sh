@@ -1,12 +1,11 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=4 python main_palette.py \
-../data/nerf_synthetic/lego \
-./results/nerf_lego/version_3/checkpoints/ngp_ep0300.pth \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
+../data/mip360/kitchen \
+./results/nerf_kitchen/version_6/checkpoints/ngp_ep0615.pth \
 --fp16 \
 --preload \
 --bound 4 \
---scale 3.2 \
 --dt_gamma 0 \
 --use_initialization_from_rgbxy \
 --model_mode palette \

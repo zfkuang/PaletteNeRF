@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--workspace', type=str, default='workspace')
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--version_id', type=int, default=-1)
 
     ### training options
     parser.add_argument('--iters', type=int, default=30000, help="training iters")
@@ -107,7 +108,10 @@ if __name__ == '__main__':
     #criterion = torch.nn.HuberLoss(reduction='none', beta=0.1) # only available after torch 1.10 ?
 
     opt.workspace = os.path.join("results", opt.workspace)
-    opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+len(glob.glob("%s/version*"%opt.workspace)))
+    if opt.version_id >= 0:
+        opt.workspace = "%s/version_%d"%(opt.workspace, opt.version_id)
+    else:
+        opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+len(glob.glob("%s/version*"%opt.workspace)))
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     if opt.test:

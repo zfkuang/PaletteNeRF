@@ -105,7 +105,7 @@ class PaletteRenderer(nn.Module):
         self.register_buffer('aabb_train', aabb_train)
         self.register_buffer('aabb_infer', aabb_infer)
 
-        if not opt.use_initialization_from_rgbxy:
+        if opt.test or not opt.use_initialization_from_rgbxy:
             self.basis_color = torch.zeros([self.num_basis, 3])+0.5
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
         else:
@@ -136,7 +136,10 @@ class PaletteRenderer(nn.Module):
             # assert(self.num_basis == color_list.shape[0]*len(self.opt.roughness_list))
             self.basis_color = torch.zeros([self.num_basis, 3])
             for i, color in enumerate(color_list):
-                self.basis_color[i::color_list.shape[0]] = srgb_to_linear(torch.FloatTensor(color))
+                if self.opt.color_space == "linear":
+                    self.basis_color[i::color_list.shape[0]] = srgb_to_linear(torch.FloatTensor(color))
+                else:
+                    self.basis_color[i::color_list.shape[0]] = torch.FloatTensor(color)
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
 
         if hist_weights is not None:
@@ -260,10 +263,11 @@ class PaletteRenderer(nn.Module):
             density_outputs[k] = v.view(-1, v.shape[-1]).detach()
 
         mask = weights > 1e-4 # hard coded
-        d_color, omega, color = self.color(xyzs.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
+        d_color, omega, color, diffuse = self.color(xyzs.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
         d_color = d_color.reshape(N, -1, self.num_basis, 3)
         omega = omega.reshape(N, -1, self.num_basis, 1)
         color = color.reshape(N, -1, 3)
+        diffuse = diffuse.reshape(N, -1, 3)
 
         basis_color = self.basis_color[None,None,:,:].clamp(0, 1)
         #basis_color = normalize(basis_color)
@@ -286,12 +290,14 @@ class PaletteRenderer(nn.Module):
 
         rgb = basis_rgb.sum(dim=-2) + color # (N_rays, N_samples_, 3)
         rgb_map = (weights[:,:,None]*rgb).sum(dim=1) # N_rays, 3
-        if self.opt.color_space != "linear":
-            rgb_map = safe_pow(rgb_map, 1/2.4)
+
+        direct_rgb = diffuse+color
+        direct_rgb_map = (weights[:,:,None]*direct_rgb).sum(dim=1) # N_rays, 3
+        # if self.opt.color_space != "linear":
+        #     rgb_map = safe_pow(rgb_map, 1/2.4) # linear 
         
         basis_rgb = basis_rgb.reshape(N, basis_rgb.shape[1], -1) # (N_rays, N_samples_, N_basis*3)
         basis_rgb_map = (weights[:,:,None]*basis_rgb).sum(dim=1) # N_rays, N_basis*3
-        basis_rgb_map = safe_pow(basis_rgb_map, 1/2.4).clamp(0, 1)
         basis_acc_map = (weights[:,:,None].detach()*omega[...,0]).sum(dim=1)
 
         # delta_rgb_norm = d_color.norm(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
@@ -299,7 +305,6 @@ class PaletteRenderer(nn.Module):
         delta_rgb_norm_map = (weights[:,:,None]*delta_rgb_norm).sum(dim=1) # N_rays, 1
         
         dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3
-        dir_rgb_map = safe_pow(dir_rgb_map, 1/2.4).clamp(0, 1)
         dir_rgb_norm = color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
         dir_rgb_norm_map = (weights[:,:,None]*dir_rgb_norm).sum(dim=1) # N_rays, 1
 
@@ -319,6 +324,7 @@ class PaletteRenderer(nn.Module):
             bg_color = 1
             
         rgb_map = rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
+        direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
 
         rgb_map = rgb_map.view(*prefix, 3)
         depth = depth.view(*prefix)
@@ -328,6 +334,7 @@ class PaletteRenderer(nn.Module):
         dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
         delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
         dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+        direct_rgb_map = direct_rgb_map.view(*prefix, 3)
         basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
 
         # tmp: reg loss in mip-nerf 360
@@ -341,6 +348,7 @@ class PaletteRenderer(nn.Module):
             'dir_norm': dir_rgb_norm_map,
             'delta_norm': delta_rgb_norm_map,
             'dir_rgb': dir_rgb_map,
+            'direct_rgb': direct_rgb_map,
             'basis_rgb': basis_rgb_map,
             'basis_acc': basis_acc_map,
             'weights_sum': weights_sum,

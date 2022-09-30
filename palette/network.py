@@ -70,10 +70,26 @@ class PaletteNetwork(PaletteRenderer):
 
         self.color_net = nn.ModuleList(color_net)
 
+        diff_net = []
+        for l in range(num_layers_color):
+            if l == 0:
+                in_dim = self.geo_feat_dim
+            else:
+                in_dim = hidden_dim
+            
+            if l == num_layers_color - 1:
+                out_dim = 3 # 3 rgb
+            else:
+                out_dim = hidden_dim
+            
+            diff_net.append(nn.Linear(in_dim, out_dim, bias=False))
+
+        self.diff_net = nn.ModuleList(diff_net)
+
         basis_net = []
         for l in range(num_layers):
             if l == 0:
-                in_dim = self.in_dim_palette
+                in_dim = self.in_dim_palette + 3
             else:
                 in_dim = hidden_dim
             
@@ -193,18 +209,41 @@ class PaletteNetwork(PaletteRenderer):
             omega = torch.zeros(mask.shape[0], self.num_basis, dtype=x.dtype, device=x.device) # [N, NB]
             omega = F.softmax(omega, dim=-1) # B, N_B
             color = torch.zeros(mask.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
+            diffuse = torch.zeros(mask.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
             # in case of empty mask
             if not mask.any():
-                return d_color, omega, color
+                return d_color, omega, color, diffuse
             x = x[mask]
             d = d[mask]
             geo_feat = geo_feat[mask]
 
+        # diffuse color
+        h = geo_feat.detach()
+        for l in range(self.num_layers_color):
+            h = self.diff_net[l](h)
+            if l != self.num_layers_color - 1:
+                h = F.relu(h, inplace=True)
+        
+        # sigmoid activation for rgb
+        h_diffuse = F.sigmoid(h)
+
+        # specular color
+        d = self.encoder_dir(d)
+        h = torch.cat([d, geo_feat.detach()], dim=-1)
+        for l in range(self.num_layers_color):
+            h = self.color_net[l](h)
+            if l != self.num_layers_color - 1:
+                h = F.relu(h, inplace=True)
+        
+        # sigmoid activation for rgb
+        h_color = F.sigmoid(h)
+
         h = self.encoder_palette(x, bound=self.bound)
+        h = torch.cat([h, h_diffuse.detach()], dim=-1)
         for l in range(self.num_layers):
             h = self.basis_net[l](h)
             if l != self.num_layers - 1:
-                h = F.relu(h, inplace=True)
+                h = F.elu(h, inplace=True)
 
         #sigma = F.relu(h[..., 0])
         h_palette_geo_feat = h
@@ -217,26 +256,18 @@ class PaletteNetwork(PaletteRenderer):
         # h_omega = F.softmax(h_omega, dim=-1) # B, N_B
         h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
 
-        d = self.encoder_dir(d)
-        h = torch.cat([d, h_palette_geo_feat], dim=-1)
-        for l in range(self.num_layers_color):
-            h = self.color_net[l](h)
-            if l != self.num_layers_color - 1:
-                h = F.relu(h, inplace=True)
-        
-        # sigmoid activation for rgb
-        h_color = torch.sigmoid(h)
-
         if mask is not None:
             d_color[mask] = h_d_color.to(d_color.dtype) # fp16 --> fp32
             omega[mask] = h_omega.to(omega.dtype) # fp16 --> fp32
             color[mask] = h_color.to(color.dtype) # fp16 --> fp32
+            diffuse[mask] = h_diffuse.to(diffuse.dtype) # fp16 --> fp32
         else:
             d_color = h_d_color
             omega = h_omega
             color = h_color 
+            diffuse = h_diffuse 
 
-        return d_color, omega, color
+        return d_color, omega, color, diffuse
 
     # optimizer utils
     def get_params(self, lr):
@@ -247,6 +278,7 @@ class PaletteNetwork(PaletteRenderer):
             {'params': self.sigma_net.parameters(), 'lr': lr},
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
+            {'params': self.diff_net.parameters(), 'lr': lr}, 
             {'params': self.delta_color_net.parameters(), 'lr': lr}, 
             {'params': self.omega_net.parameters(), 'lr': lr}, 
             {'params': self.basis_color, 'lr': lr}, 

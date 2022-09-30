@@ -158,6 +158,7 @@ def palette_extraction(
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
+        error_thres=5.0/255.0,
         target_size=palette_size)
 
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
@@ -372,6 +373,8 @@ class PaletteTrainer(object):
         
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
+        loss_direct = self.criterion(outputs['direct_rgb'], gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
+        loss += loss_direct
         # patch-based rendering
         if self.opt.patch_size > 1:
             gt_rgb = gt_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
@@ -386,12 +389,16 @@ class PaletteTrainer(object):
         loss_dict = {}
         pred_omega = outputs['omega_norm']
         sparsity_loss = pred_omega.mean()
+
         pred_delta_color = outputs['delta_norm']
         delta_loss = pred_delta_color.mean()
+
         pred_dir_color = outputs['dir_norm']
         dir_loss = pred_dir_color.mean()
+
         pred_weights = outputs['basis_acc']
         weights_guide_loss = ((gt_weights-pred_weights)**2).mean()
+
         loss = loss + self.opt.lambda_sparsity * sparsity_loss + self.opt.lambda_delta * delta_loss + self.opt.lambda_dir * dir_loss
         loss = loss + weights_guide_loss * self.lambda_weight
 
@@ -400,6 +407,7 @@ class PaletteTrainer(object):
         loss_dict['loss_dir'] =  self.opt.lambda_dir * dir_loss
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
         loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
+        loss_dict['loss_direct'] = loss_direct.mean()
 
         # special case for CCNeRF's rank-residual training
         if len(loss.shape) == 3: # [K, B, N]
@@ -671,6 +679,9 @@ class PaletteTrainer(object):
                     pred_dir_color = outputs['dir_rgb'][0].detach().cpu().numpy()
                     pred_dir_color = pred_dir_color.reshape(pred.shape[0], pred.shape[1], 3)
                     pred_dir_color = (pred_dir_color.clip(0,1) * 255).astype(np.uint8)
+                    pred_direct_color = outputs['direct_rgb'][0].detach().cpu().numpy()
+                    pred_direct_color = pred_direct_color.reshape(pred.shape[0], pred.shape[1], 3)
+                    pred_direct_color = (pred_direct_color.clip(0,1) * 255).astype(np.uint8)
 
                     pred_basis_img = []
                     pred_basis_acc = []
@@ -684,7 +695,7 @@ class PaletteTrainer(object):
                         basis_color = basis_color.clamp(0, 1)
                         # basis_color = basis_color/(basis_color.norm(dim=-1, keepdim=True)+1e-6).detach()
                         # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
-                        pred_basis_color.append(linear_to_srgb(basis_color).detach().cpu().numpy())
+                        pred_basis_color.append(basis_color.detach().cpu().numpy())
 
                     pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
                     pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
@@ -736,15 +747,12 @@ class PaletteTrainer(object):
 
         outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=perturb, **vars(self.opt))
 
-        pred_rgb = outputs['image']
-        pred_depth = outputs['depth']
-        pred_xyz = data['rays_o'] + data['rays_d'] * outputs['depth'][...,None]
-        pred_weight = outputs['weights_sum']
+        outputs['preds'] = outputs['image']
+        outputs['preds_depth'] = outputs['depth']
+        outputs['preds_xyz'] = data['rays_o'] + data['rays_d'] * outputs['depth'][...,None]
+        outputs['preds_weight'] = outputs['weights_sum']
 
-        return {'preds': pred_rgb,
-                'preds_depth': pred_depth,
-                'preds_xyz': pred_xyz,
-                'preds_weight': pred_weight}
+        return outputs 
 
     def test(self, loader, save_path=None, name=None, write_video=True):
 
@@ -777,16 +785,20 @@ class PaletteTrainer(object):
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     outputs = self.test_step(data)
 
-                if self.opt.color_space == 'linear':
-                    preds = linear_to_srgb(preds)
 
-                pred = outputs['preds'][0].reshape(H, W, 3).detach().cpu().numpy()
+                pred = outputs['preds'][0].reshape(H, W, 3)
+                
+                if self.opt.color_space == 'linear':
+                    pred = linear_to_srgb(pred)
+                    
+                pred = pred.detach().cpu().numpy()
                 pred = (pred.clip(0, 1) * 255).astype(np.uint8)
 
                 pred_depth = outputs['preds_depth'][0].reshape(H, W).detach().cpu().numpy()
                 pred_depth = (pred_depth * 255).astype(np.uint8)
                 
-                pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3).detach().cpu().numpy()
+                pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
+                pred_basis_dir_color = pred_basis_dir_color.detach().cpu().numpy()
                 pred_basis_dir_color = (pred_basis_dir_color.clip(0, 1) * 255).astype(np.uint8)
 
                 pred_basis_img = []
@@ -923,6 +935,15 @@ class PaletteTrainer(object):
                     outputs = self.test_step(data)
                     
                 preds = data['images'][...,:3].reshape(-1, 3)
+                
+                def test_img(img):
+                    img = img.reshape([800, 800, 3]).detach().cpu().numpy()
+                    img = (img.clip(0,1)*255).astype(np.uint8)
+                    cv2.imwrite("test.png", img[...,[2,1,0]])
+
+                if self.opt.color_space == 'linear':
+                    preds = srgb_to_linear(preds)
+
                 preds_norm = preds+0.05
                 preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
                 preds_depth = outputs['preds_depth'][0]
@@ -933,11 +954,6 @@ class PaletteTrainer(object):
                 preds_norm = preds_norm[valid]
                 preds_depth = preds_depth[valid]
                 preds_xyz = preds_xyz[valid]
-
-                if self.opt.color_space == 'linear':
-                    preds = linear_to_srgb(preds)
-                    preds_norm = linear_to_srgb(preds_norm)
-
                 all_preds.append(preds)
                 all_preds_xyz.append(preds_xyz)
                 all_preds_depth.append(preds_depth)

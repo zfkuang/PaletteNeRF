@@ -50,11 +50,17 @@ def Hull_Simplification_posternerf(
         Tan18.write_convexhull_into_obj_file(hull, output_rawhull_obj_file)
 
         if len(hull.vertices) <= 10:
+            print("Remaining vertices: ", len(hull.vertices))
+            print(hull.points[ hull.vertices ].clip(0.0,1.0))
             if target_size is None:
-                reconstruction_errors=Tan18.outsidehull_points_distance_unique_data_version(hull.points[ hull.vertices ].clip(0.0,1.0), unique_data, pixel_counts)
-                print('reconstruction_erros:', reconstruction_errors)
+                fail=False
+                try:
+                    reconstruction_errors=Tan18.outsidehull_points_distance_unique_data_version(hull.points[ hull.vertices ].clip(0.0,1.0), unique_data, pixel_counts)
+                    print('reconstruction_erros:', reconstruction_errors)
+                except:
+                    fail=True
 
-                if reconstruction_errors>error_thres:
+                if fail or reconstruction_errors>error_thres:
                     oldhull=ConvexHull(old_vertices)
                     Tan18.write_convexhull_into_obj_file(oldhull, output_prefix + '-org-final.obj')
                     return oldhull.points[ oldhull.vertices ].clip(0.0,1.0).reshape(-1,3)

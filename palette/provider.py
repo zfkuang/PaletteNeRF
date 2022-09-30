@@ -2,19 +2,16 @@ import os
 import cv2
 import glob
 import json
-import math
 from cv2 import transform
 import tqdm
 import numpy as np
 from scipy.spatial.transform import Slerp, Rotation
 
 import trimesh
+import math 
 
 import torch
 from torch.utils.data import DataLoader
-from sklearn.cluster import KMeans, MeanShift
-from skimage import color
-import imageio
 
 from .utils import get_rays
 
@@ -147,6 +144,9 @@ class NeRFDataset:
                     transform_val = json.load(f)
                 transform['frames'].extend(transform_val['frames'])
             # only load one specified split
+            elif type == 'traintest':
+                with open(os.path.join(self.root_path, f'transforms_train.json'), 'r') as f:
+                    transform = json.load(f)
             else:
                 with open(os.path.join(self.root_path, f'transforms_{type}.json'), 'r') as f:
                     transform = json.load(f)
@@ -168,7 +168,7 @@ class NeRFDataset:
         
         # for colmap, manually interpolate a test set.
         if self.mode == 'colmap' and type == 'test':
-
+            
             # choose two random poses, and interpolate between.
             f0, f1 = np.random.choice(frames, 2, replace=False)
             pose0 = nerf_matrix_to_ngp(np.array(f0['transform_matrix'], dtype=np.float32), scale=self.scale, offset=self.offset) # [4, 4]
@@ -229,7 +229,6 @@ class NeRFDataset:
             
             self.poses = []
             self.images = []
-            fg_rays = []
             for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
                 f_path = os.path.join(self.root_path, f['file_path'])
                 if self.mode == 'blender' and '.' not in os.path.basename(f_path):
@@ -243,7 +242,7 @@ class NeRFDataset:
                 pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
 
                 image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
-                if image.dtype == np.uint16:
+                if image.dtype == np.uint16 and image.max() > 500:
                     image = (image // 256).astype(np.uint8)
                 if self.H is None or self.W is None:
                     self.H = image.shape[0] // downscale
@@ -261,25 +260,7 @@ class NeRFDataset:
 
                 self.poses.append(pose)
                 self.images.append(image)
-                if image.shape[-1] == 4:
-                    fg_rays.append(image[image[...,3]>0.8][...,:3])
-                else:
-                    fg_rays.append(image)
-
-            fg_rays = np.concatenate(fg_rays, axis=0).reshape(-1, 3)        
-
-            if self.opt.use_initialization_from_rays:
-                lab = color.rgb2lab(fg_rays)
-                lab = lab[np.random.choice(lab.shape[0], lab.shape[0]//16)]
-                # kmeans = KMeans(n_clusters=5, random_state=0).fit(X)
-                clustering = KMeans(n_clusters=self.opt.color_cluster_num, random_state=0).fit(lab[:,1:])
-                center = clustering.cluster_centers_
-                center = np.concatenate([center[:,0:1]*0+50, center], axis=-1)
-                center = color.lab2rgb(center).astype(np.float32)
-                self.cluster_color = center
-                center_img = (center*255).astype(np.uint8)
-                center_img = center[:,None,None,:].repeat(256, 1).repeat(256, 2).reshape(-1, 256, 3)    
-                imageio.imwrite("test.png", center_img)
+            
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
         if self.images is not None:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]

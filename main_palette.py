@@ -37,7 +37,7 @@ if __name__ == '__main__':
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
 
     ### dataset options
-    parser.add_argument('--color_space', type=str, default='srgb', help="Color space, supports (linear, srgb)")
+    parser.add_argument('--color_space', type=str, default='srgb', choices=['srgb', 'linear'], help="Color space, supports (linear, srgb)")
     parser.add_argument('--preload', action='store_true', help="preload all data into GPU, accelerate training but use more GPU memory")
     # (the default value is for the fox dataset)
     parser.add_argument('--bound', type=float, default=2, help="assume the scene is bounded in box[-bound, bound]^3, if > 1, will invoke adaptive ray marching.")
@@ -71,8 +71,8 @@ if __name__ == '__main__':
     parser.add_argument('--continue_training', action='store_true', help="continue training")
     parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
     parser.add_argument("--lambda_sparsity", type=float, default=0.002, help='weight of sparsity loss')
-    parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.01, help='weight of delta color loss')
+    parser.add_argument("--lambda_dir", type=float, default=0.02, help='weight of dir loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.1, help='weight of delta color loss')
     parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
@@ -92,12 +92,16 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
-    workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
+    palette_workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
     if opt.use_normalized_palette:
-        palette_workspace = workspace.replace("version", "normalized_version")
-    else:
-        palette_workspace = workspace
-    os.makedirs(workspace, exist_ok=True)
+        palette_workspace = palette_workspace.replace("version", "normalized_version")
+    os.makedirs(palette_workspace, exist_ok=True)
+    
+    workspace = os.path.dirname(palette_workspace)
+    workspace_list = glob.glob("%s/version*"%workspace)
+    workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+    workspace = "%s/version_%d"%(workspace, (1-max(opt.test, opt.continue_training))+workspace_list) 
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     if opt.use_initialization_from_rgbxy:
@@ -133,18 +137,27 @@ if __name__ == '__main__':
     
     print(model)
 
-    if opt.test:    
+    if opt.extract_palette:    
         trainer = PaletteTrainer('palette', opt, model, device=device, 
-                fp16=opt.fp16, workspace=workspace, nerf_path=opt.nerf_path)
-        if opt.extract_palette:    
-            train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
-            trainer.sample_rays(train_loader) # test and save video
-        elif opt.gui:
+                fp16=opt.fp16, workspace=palette_workspace, nerf_path=opt.nerf_path)
+        train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
+        trainer.sample_rays(train_loader) # test and save video
+    elif opt.test:
+        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
+                                use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path)
+        if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
             palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
             hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
             gui = PaletteGUI(opt, trainer, palette, hist_weights)
             gui.render()
+        else:
+            test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()
+
+            if test_loader.has_gt:
+                trainer.evaluate(test_loader) # blender has gt, so evaluate it.
+
+            trainer.test(test_loader, write_video=True) # test and save video
     else:      
         assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
         palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
@@ -158,11 +171,6 @@ if __name__ == '__main__':
         # decay to 0.1 * init_lr at last iter step
         scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-
-        workspace = os.path.dirname(workspace)
-        workspace_list = glob.glob("%s/version*"%workspace)
-        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-        workspace = "%s/version_%d"%(workspace, (1-opt.continue_training)+workspace_list)
 
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
@@ -178,11 +186,9 @@ if __name__ == '__main__':
         trainer.train(train_loader, valid_loader, max_epoch)
 
         # also test
-        test_loader = NeRFDataset(opt, device=device, type='test', n_test=10).dataloader()
+        test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()
         
         if test_loader.has_gt:
             trainer.evaluate(test_loader) # blender has gt, so evaluate it.
         
-        trainer.test(test_loader, write_video=True) # test and save video
-        
-        trainer.save_mesh(resolution=256, threshold=10)
+        trainer.test(test_loader, write_video=True) # test and save vide

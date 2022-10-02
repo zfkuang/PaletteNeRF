@@ -77,18 +77,18 @@ class PaletteGUI:
         self.downscale = 1
         self.train_steps = 16
 
-        self.load_palette(palette, hist_weights)
+        self.load_palette()
 
         dpg.create_context()
         self.register_dpg()
         self.test_step()
         
-    def load_palette(self, palette, hist_weights):
+    def load_palette(self):
         self.palette_mode = False
-        self.palette = torch.from_numpy(palette).float()
-        self.origin_palette = torch.from_numpy(palette).float()
-        self.hist_weights = torch.from_numpy(hist_weights).float()
-        self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
+        self.palette = self.trainer.model.basis_color.data
+        self.origin_palette = self.palette.clone()
+        # self.hist_weights = torch.from_numpy(hist_weights).float()
+        # self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
         self.highlight_palette_id = 0
         
     def __del__(self):
@@ -133,7 +133,6 @@ class PaletteGUI:
         
             starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
             starter.record()
-
             outputs = self.trainer.test_gui(self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, self.spp, self.downscale)
 
             ender.record()
@@ -151,12 +150,12 @@ class PaletteGUI:
             output_buffer = self.prepare_buffer(outputs)
             # recolor render buffer
             # if self.palette_mode:
-            with torch.no_grad():
-                render_img = torch.from_numpy(output_buffer)[None,None,:,:,[2,1,0]]*2-1
-                weight = torch.nn.functional.grid_sample(self.hist_weights, render_img, mode='nearest', padding_mode='zeros', align_corners=True)
-                weight = weight.squeeze().permute(1, 2, 0)
-                render_img = torch.matmul(weight, self.palette)
-                output_buffer = render_img.reshape(output_buffer.shape).detach().numpy()
+            # with torch.no_grad():
+            #     render_img = torch.from_numpy(output_buffer)[None,None,:,:,[2,1,0]]*2-1
+            #     weight = torch.nn.functional.grid_sample(self.hist_weights, render_img, mode='nearest', padding_mode='zeros', align_corners=True)
+            #     weight = weight.squeeze().permute(1, 2, 0)
+            #     render_img = torch.matmul(weight, self.palette)
+            #     output_buffer = render_img.reshape(output_buffer.shape).detach().numpy()
 
             if self.need_update:
                 self.render_buffer = output_buffer
@@ -360,6 +359,7 @@ class PaletteGUI:
 
                 def refresh_palette_color():
                     highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
+                    self.trainer.model.basis_color.data = self.palette.type_as(self.trainer.model.basis_color.data)
                     dpg.set_value("_palette_color_editor", tuple(highlight_color))
 
                 def callback_set_palette_mode(sender, app_data):

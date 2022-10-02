@@ -111,7 +111,10 @@ if __name__ == '__main__':
     if opt.version_id >= 0:
         opt.workspace = "%s/version_%d"%(opt.workspace, opt.version_id)
     else:
-        opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+len(glob.glob("%s/version*"%opt.workspace)))
+        workspace_list = glob.glob("%s/version*"%opt.workspace)
+        print(workspace_list)
+        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+        opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+workspace_list) 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     if opt.test:

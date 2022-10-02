@@ -737,7 +737,7 @@ class PaletteTrainer(object):
         self.log(f"++> Evaluate epoch {self.epoch} Finished.")
 
     # moved out bg_color and perturb for more flexible control...
-    def test_step(self, data, bg_color=None, perturb=False):  
+    def test_step(self, data, bg_color=None, perturb=False, gui_mode=False):  
 
         rays_o = data['rays_o'] # [B, N, 3]
         rays_d = data['rays_d'] # [B, N, 3]
@@ -745,7 +745,7 @@ class PaletteTrainer(object):
         if bg_color is not None:
             bg_color = bg_color.to(self.device)
 
-        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=perturb, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=perturb, gui_mode=gui_mode, **vars(self.opt))
 
         outputs['preds'] = outputs['image']
         outputs['preds_depth'] = outputs['depth']
@@ -873,7 +873,6 @@ class PaletteTrainer(object):
         pose = torch.from_numpy(pose).unsqueeze(0).to(self.device)
 
         rays = get_rays(pose, intrinsics, rH, rW, -1)
-
         data = {
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
@@ -886,7 +885,7 @@ class PaletteTrainer(object):
         with torch.no_grad():
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 # here spp is used as perturb random seed! (but not perturb the first sample)
-                output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp)
+                output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp, gui_mode=True)
         preds = output_dict['preds'].reshape(-1, rH, rW, 3)
         preds_depth = output_dict['preds_depth'].reshape(-1, rH, rW)
 
@@ -1060,6 +1059,10 @@ class PaletteTrainer(object):
                 self.model.mean_count = checkpoint_dict['mean_count']
             if 'mean_density' in checkpoint_dict:
                 self.model.mean_density = checkpoint_dict['mean_density']
+            else:
+                self.log(f"[WARN] mean_density not found, generating new density grid...")   
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    self.model.update_extra_state()
         
         if model_only:
             return
@@ -1085,3 +1088,6 @@ class PaletteTrainer(object):
                 self.model.mean_count = checkpoint_dict['mean_count']
             if 'mean_density' in checkpoint_dict:
                 self.model.mean_density = checkpoint_dict['mean_density']
+            else:
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    self.model.update_extra_state()

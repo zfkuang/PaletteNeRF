@@ -144,7 +144,7 @@ if __name__ == '__main__':
         trainer.sample_rays(train_loader) # test and save video
     elif opt.test:
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
-                                use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path)
+                                use_checkpoint=opt.ckpt, nerf_path=None)
         if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
             palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']

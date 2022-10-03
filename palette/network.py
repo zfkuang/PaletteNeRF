@@ -132,40 +132,35 @@ class PaletteNetwork(PaletteRenderer):
             self.bg_net = None
 
 
-    # def forward(self, x, d):
-    #     # x: [N, 3], in [-bound, bound]
-    #     # d: [N, 3], nomalized in [-1, 1]
+    def forward(self, x, d):
+        # x: [N, 3], in [-bound, bound]
+        # d: [N, 3], nomalized in [-1, 1]
 
-    #     # sigma
-    #     x = self.encoder(x, bound=self.bound)
+        # sigma
+        h = self.encoder(x, bound=self.bound)
+        for l in range(self.num_layers):
+            h = self.sigma_net[l](h)
+            if l != self.num_layers - 1:
+                h = F.relu(h, inplace=True)
 
-    #     h = x
-    #     for l in range(self.num_layers):
-    #         h = self.sigma_net[l](h)
-    #         if l != self.num_layers - 1:
-    #             h = F.relu(h, inplace=True)
+        #sigma = F.relu(h[..., 0])
+        sigma = trunc_exp(h[..., 0])
+        geo_feat = h[..., 1:]
 
-    #     #sigma = F.relu(h[..., 0])
-    #     sigma = trunc_exp(h[..., 0])
-    #     geo_feat = h[..., 1:]
-
-    #     # color
+        # color
         
-    #     d = self.encoder_dir(d)
-    #     h = torch.cat([d, geo_feat], dim=-1)
-    #     for l in range(self.num_layers_color):
-    #         h = self.color_net[l](h)
-    #         if l != self.num_layers_color - 1:
-    #             h = F.relu(h, inplace=True)
+        h = torch.cat([self.encoder_dir(d), geo_feat], dim=-1)
+        for l in range(self.num_layers_color):
+            h = self.color_net[l](h)
+            if l != self.num_layers_color - 1:
+                h = F.relu(h, inplace=True)
         
-    #     # sigmoid activation for rgb
-    #     color = torch.sigmoid(h)
-
-    #     return sigma, color
+        # sigmoid activation for rgb
+        d_color, omega, color, diffuse = self.color(x, d, geo_feat=geo_feat)
+        return sigma, d_color, omega, color, diffuse
 
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
-
         x = self.encoder(x, bound=self.bound)
         h = x
         for l in range(self.num_layers):
@@ -203,20 +198,17 @@ class PaletteNetwork(PaletteRenderer):
     def color(self, x, d, mask=None, geo_feat=None, **kwargs):
         # x: [N, 3] in [-bound, bound]
         # mask: [N,], bool, indicates where we actually needs to compute rgb.
-
+        
         if mask is not None:
-            d_color = torch.zeros(mask.shape[0], 3*self.num_basis, dtype=x.dtype, device=x.device) # [N, 3]
-            omega = torch.zeros(mask.shape[0], self.num_basis, dtype=x.dtype, device=x.device) # [N, NB]
+            d_color = torch.zeros(x.shape[0], 3*self.num_basis, dtype=geo_feat.dtype, device=geo_feat.device) # [N, 3]
+            omega = torch.zeros(x.shape[0], self.num_basis, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]
             omega = F.softmax(omega, dim=-1) # B, N_B
-            color = torch.zeros(mask.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
-            diffuse = torch.zeros(mask.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
-            # in case of empty mask
-            if not mask.any():
-                return d_color, omega, color, diffuse
-            x = x[mask]
-            d = d[mask]
-            geo_feat = geo_feat[mask]
-
+            color = torch.zeros(x.shape[0], 3, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]
+            diffuse = torch.zeros(x.shape[0], 3, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]        
+            x = x[mask]        
+            d = d[mask]        
+            geo_feat = geo_feat[mask]        
+  
         # diffuse color
         h = geo_feat.detach()
         for l in range(self.num_layers_color):
@@ -226,7 +218,7 @@ class PaletteNetwork(PaletteRenderer):
         
         # sigmoid activation for rgb
         h_diffuse = F.sigmoid(h)
-
+        
         # specular color
         d = self.encoder_dir(d)
         h = torch.cat([d, geo_feat.detach()], dim=-1)
@@ -237,7 +229,7 @@ class PaletteNetwork(PaletteRenderer):
         
         # sigmoid activation for rgb
         h_color = F.sigmoid(h)
-
+        
         h = self.encoder_palette(x, bound=self.bound)
         h = torch.cat([h, h_diffuse.detach()], dim=-1)
         for l in range(self.num_layers):
@@ -247,7 +239,7 @@ class PaletteNetwork(PaletteRenderer):
 
         #sigma = F.relu(h[..., 0])
         h_palette_geo_feat = h
-
+        
         if self.opt.multiply_delta:
             h_d_color = self.delta_color_net(h_palette_geo_feat)+1 # B, N_B*3
         else:
@@ -255,18 +247,18 @@ class PaletteNetwork(PaletteRenderer):
         h_omega = self.omega_net(h_palette_geo_feat)+0.05 # B, N_B
         # h_omega = F.softmax(h_omega, dim=-1) # B, N_B
         h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
-
+        
         if mask is not None:
-            d_color[mask] = h_d_color.to(d_color.dtype) # fp16 --> fp32
-            omega[mask] = h_omega.to(omega.dtype) # fp16 --> fp32
-            color[mask] = h_color.to(color.dtype) # fp16 --> fp32
-            diffuse[mask] = h_diffuse.to(diffuse.dtype) # fp16 --> fp32
+            d_color[mask] = h_d_color # fp16 --> fp32
+            omega[mask] = h_omega # fp16 --> fp32
+            color[mask] = h_color # fp16 --> fp32
+            diffuse[mask] = h_diffuse # fp16 --> fp32
         else:
             d_color = h_d_color
             omega = h_omega
             color = h_color 
             diffuse = h_diffuse 
-
+        
         return d_color, omega, color, diffuse
 
     # optimizer utils

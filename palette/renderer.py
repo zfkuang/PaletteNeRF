@@ -87,7 +87,7 @@ class PaletteRenderer(nn.Module):
         super().__init__()
 
         self.bound = bound
-        self.cascade = 1 #+ math.ceil(math.log2(bound))
+        self.cascade = 1 + math.ceil(math.log2(bound))
         self.grid_size = 128
         self.density_scale = density_scale
         self.min_near = min_near

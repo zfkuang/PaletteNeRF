@@ -142,6 +142,13 @@ if __name__ == '__main__':
                 fp16=opt.fp16, workspace=palette_workspace, nerf_path=opt.nerf_path)
         train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
         trainer.sample_rays(train_loader) # test and save video
+    elif opt.build_grid:
+        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
+                                use_checkpoint=opt.ckpt, nerf_path=None)
+        train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
+        trainer.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
+        trainer.model.update_extra_state()
+        trainer.save_checkpoint(full=True, best=False)
     elif opt.test:
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
                                 use_checkpoint=opt.ckpt, nerf_path=None)

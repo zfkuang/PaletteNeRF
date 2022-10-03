@@ -1088,6 +1088,5 @@ class PaletteTrainer(object):
                 self.model.mean_count = checkpoint_dict['mean_count']
             if 'mean_density' in checkpoint_dict:
                 self.model.mean_density = checkpoint_dict['mean_density']
-            else:
-                with torch.cuda.amp.autocast(enabled=self.fp16):
-                    self.model.update_extra_state()
+            with torch.cuda.amp.autocast(enabled=self.fp16):
+                self.model.update_extra_state()

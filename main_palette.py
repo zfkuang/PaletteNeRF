@@ -75,7 +75,7 @@ if __name__ == '__main__':
     parser.add_argument("--lambda_delta", type=float, default=0.1, help='weight of delta color loss')
     parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
-    parser.add_argument("--max_freeze_palette_epoch", type=int, default=10000, help='number of maximum epoch to freeze palette color')
+    parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     

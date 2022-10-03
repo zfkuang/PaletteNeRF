@@ -887,7 +887,7 @@ class PaletteTrainer(object):
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 # here spp is used as perturb random seed! (but not perturb the first sample)
                 output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp)
-        preds = output_dict['preds'].reshape(-1, rH, rW, 3)
+        preds = output_dict['preds'].reshape(-1, rH, rW, 3).clamp(0, 1)
         preds_depth = output_dict['preds_depth'].reshape(-1, rH, rW)
 
         # interpolation to the original resolution

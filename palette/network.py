@@ -200,14 +200,16 @@ class PaletteNetwork(PaletteRenderer):
         # mask: [N,], bool, indicates where we actually needs to compute rgb.
         
         if mask is not None:
-            d_color = torch.zeros(x.shape[0], 3*self.num_basis, dtype=geo_feat.dtype, device=geo_feat.device) # [N, 3]
-            omega = torch.zeros(x.shape[0], self.num_basis, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]
+            d_color = torch.zeros(x.shape[0], 3*self.num_basis, dtype=x.dtype, device=x.device) # [N, 3]
+            omega = torch.zeros(x.shape[0], self.num_basis, dtype=x.dtype, device=x.device) # [N, NB]
             omega = F.softmax(omega, dim=-1) # B, N_B
-            color = torch.zeros(x.shape[0], 3, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]
-            diffuse = torch.zeros(x.shape[0], 3, dtype=geo_feat.dtype, device=geo_feat.device) # [N, NB]        
+            color = torch.zeros(x.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
+            diffuse = torch.zeros(x.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]        
+            if not mask.any():
+                return d_color, omega, color, diffuse
             x = x[mask]        
             d = d[mask]        
-            geo_feat = geo_feat[mask]        
+            geo_feat = geo_feat[mask]       
   
         # diffuse color
         h = geo_feat.detach()
@@ -249,10 +251,10 @@ class PaletteNetwork(PaletteRenderer):
         h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
         
         if mask is not None:
-            d_color[mask] = h_d_color # fp16 --> fp32
-            omega[mask] = h_omega # fp16 --> fp32
-            color[mask] = h_color # fp16 --> fp32
-            diffuse[mask] = h_diffuse # fp16 --> fp32
+            d_color[mask] = h_d_color.to(d_color.dtype) # fp16 --> fp32
+            omega[mask] = h_omega.to(omega.dtype) # fp16 --> fp32
+            color[mask] = h_color.to(color.dtype) # fp16 --> fp32
+            diffuse[mask] = h_diffuse.to(diffuse.dtype) # fp16 --> fp32
         else:
             d_color = h_d_color
             omega = h_omega

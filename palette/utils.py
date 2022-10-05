@@ -398,13 +398,21 @@ class PaletteTrainer(object):
 
         pred_weights = outputs['basis_acc']
         weights_guide_loss = ((gt_weights-pred_weights)**2).mean()
+        
+        if self.opt.lambda_smooth > 0 and self.model.require_smooth_loss:
+            pred_smooth_norm = outputs['smooth_norm']
+            smooth_loss = pred_smooth_norm.mean()
+        else:
+            smooth_loss = 0
 
         loss = loss + self.opt.lambda_sparsity * sparsity_loss + self.opt.lambda_delta * delta_loss + self.opt.lambda_dir * dir_loss
+        loss = loss + smooth_loss * self.opt.lambda_smooth
         loss = loss + weights_guide_loss * self.lambda_weight
 
         loss_dict['loss_sparsity'] =  self.opt.lambda_sparsity * sparsity_loss
         loss_dict['loss_delta'] =  self.opt.lambda_delta * delta_loss
         loss_dict['loss_dir'] =  self.opt.lambda_dir * dir_loss
+        loss_dict['loss_smooth'] =  self.opt.lambda_smooth * smooth_loss
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
         loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
         loss_dict['loss_direct'] = loss_direct.mean()
@@ -464,7 +472,7 @@ class PaletteTrainer(object):
             gt_rgb = images
         gt_weights = get_palette_weight_with_hist(gt_rgb, self.model.hist_weights).detach()
         
-        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=False, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=False, test_mode=True, **vars(self.opt))
 
         pred_rgb = outputs['image'].reshape(B, H, W, 3)
         pred_depth = outputs['depth'].reshape(B, H, W)
@@ -499,6 +507,8 @@ class PaletteTrainer(object):
             
             if epoch >= self.opt.max_freeze_palette_epoch or not self.opt.use_initialization_from_rgbxy:
                 self.model.freeze_basis_color = False
+            if epoch >= self.opt.smooth_epoch:
+                self.model.require_smooth_loss = True
 
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer.close()
@@ -745,7 +755,7 @@ class PaletteTrainer(object):
         if bg_color is not None:
             bg_color = bg_color.to(self.device)
 
-        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=perturb, gui_mode=gui_mode, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, staged=True, bg_color=bg_color, perturb=perturb, gui_mode=gui_mode, test_mode=True, **vars(self.opt))
 
         outputs['preds'] = outputs['image']
         outputs['preds_depth'] = outputs['depth']

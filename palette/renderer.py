@@ -95,6 +95,7 @@ class PaletteRenderer(nn.Module):
         self.bg_radius = bg_radius # radius of the background sphere.
         self.num_basis = opt.num_basis
         self.freeze_basis_color = opt.use_initialization_from_rgbxy
+        self.require_smooth_loss = False
         self.color_weight = 0
         self.opt = opt
 
@@ -169,7 +170,7 @@ class PaletteRenderer(nn.Module):
         self.mean_count = 0
         self.local_step = 0
 
-    def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, **kwargs):
+    def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, test_mode=False, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # bg_color: [3] in range [0, 1]
         # return: image: [B, N, 3], depth: [B, N]
@@ -286,6 +287,23 @@ class PaletteRenderer(nn.Module):
         color = color.reshape(N, -1, 3)
         diffuse = diffuse.reshape(N, -1, 3)
 
+        if self.require_smooth_loss and not test_mode:
+            xyzs_diff = (xyzs + torch.rand_like(xyzs)*0.05).clamp(-self.bound, self.bound)
+            xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
+            d_color_diff, omega_diff, _, diffuse_diff = self.color(xyzs_diff.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
+            d_color_diff = d_color_diff.reshape(N, -1, self.num_basis, 3)
+            omega_diff = omega_diff.reshape(N, -1, self.num_basis, 1)
+            diffuse_diff = diffuse_diff.reshape(N, -1, 3)
+            
+            rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05).norm(dim=-1, keepdim=True)**2 / 1
+            smooth_weight = (xyzs_weight + rgb_weight).detach()
+            smooth_weight = torch.exp(-smooth_weight)
+            smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
+            smooth_norm_map = (weights[:,:,None]*smooth_norm).sum(dim=1) # N_rays, 1
+            smooth_norm_map = smooth_norm_map.view(*prefix)
+        else:
+            smooth_norm_map = None
+
         # torch.cuda.synchronize()
         # print("timer 6: %.04f"%(time.perf_counter()-st_time))
 
@@ -369,6 +387,7 @@ class PaletteRenderer(nn.Module):
             return {
                 'depth': depth,
                 'image': rgb_map,
+                'smooth_norm': smooth_norm_map,
                 'omega_norm': omega_norm_map,
                 'dir_norm': dir_rgb_norm_map,
                 'delta_norm': delta_rgb_norm_map,
@@ -646,7 +665,7 @@ class PaletteRenderer(nn.Module):
         #print(f'[density grid] min={self.density_grid.min().item():.4f}, max={self.density_grid.max().item():.4f}, mean={self.mean_density:.4f}, occ_rate={(self.density_grid > 0.01).sum() / (128**3 * self.cascade):.3f} | [step counter] mean={self.mean_count}')
 
 
-    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, **kwargs):
+    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, test_mode=False, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: pred_rgb: [B, N, 3]
 
@@ -665,9 +684,11 @@ class PaletteRenderer(nn.Module):
                 head = 0
                 while head < N:
                     tail = min(head + max_ray_batch, N)
-                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], **kwargs)
+                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, **kwargs)
                     # results_.pop("weights_sum")
                     for k, v in results_.items():
+                        if v is None:
+                            continue
                         if k == 'weights_sum':
                             v = v[None,...]
                         if k not in results.keys():

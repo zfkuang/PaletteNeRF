@@ -320,6 +320,7 @@ class Trainer(object):
         self.scheduler_update_every_step = scheduler_update_every_step
         self.device = device if device is not None else torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
         self.console = Console()
+        self.val_len = 10
 
         model.to(self.device)
         if self.world_size > 1:
@@ -888,18 +889,22 @@ class Trainer(object):
 
         self.model.eval()
 
+        data_len = min(len(loader), self.val_len)
+
         if self.ema is not None:
             self.ema.store()
             self.ema.copy_to()
 
         if self.local_rank == 0:
-            pbar = tqdm.tqdm(total=len(loader) * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
+            pbar = tqdm.tqdm(total=data_len * loader.batch_size, bar_format='{desc}: {percentage:3.0f}% {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}]')
 
         with torch.no_grad():
             self.local_step = 0
 
             for data in loader:    
                 self.local_step += 1
+                if self.local_step == data_len+1:
+                    break
 
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     preds, preds_depth, truths, loss = self.eval_step(data)

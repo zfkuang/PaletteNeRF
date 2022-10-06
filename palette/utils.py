@@ -760,7 +760,8 @@ class PaletteTrainer(object):
         outputs['preds'] = outputs['image']
         outputs['preds_depth'] = outputs['depth']
         outputs['preds_xyz'] = data['rays_o'] + data['rays_d'] * outputs['depth'][...,None]
-        outputs['preds_weight'] = outputs['weights_sum']
+        if 'weights_sum' in outputs.keys():
+            outputs['preds_weight'] = outputs['weights_sum']
 
         return outputs 
 
@@ -859,16 +860,20 @@ class PaletteTrainer(object):
             W_img = W_img//self.opt.num_basis
             _, W_p = all_preds_basis_color.shape[1:3]
             W_p = W_p//self.opt.num_basis
-            imageio.mimwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color, fps=25, quality=8, macro_block_size=1)
-            imageio.mimwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color, fps=25, quality=8, macro_block_size=1)
+
+            def mwrite(filename, frames):
+                frames = frames[:, frames.shape[1]//2*2, frames.shape[2]//2*2]
+                imageio.mimwrite(filename, frames, fps=25, quality=8, macro_block_size=1)
+            mwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds)
+            mwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth)
+            mwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img)
+            mwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc)
+            mwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color)
+            mwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color)
             for i in range(self.opt.num_basis):
-                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
-                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)], fps=25, quality=8, macro_block_size=1)
-                imageio.mimwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)], fps=25, quality=8, macro_block_size=1)
+                mwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)])
+                mwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)])
+                mwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)])
 
         self.log(f"==> Finished Test.")
 
@@ -957,7 +962,9 @@ class PaletteTrainer(object):
                 preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
-                preds_weight = outputs['preds_weight'][0]
+                preds_weight = outputs['preds_weight']
+                if preds_weight.shape[0] == 1:
+                    preds_weight = preds_weight[0]
                 valid = (preds_weight>5e-1)
                 preds = preds[valid]
                 preds_norm = preds_norm[valid]
@@ -968,7 +975,6 @@ class PaletteTrainer(object):
                 all_preds_depth.append(preds_depth)
                 all_preds_norm.append(preds_norm)
                 pbar.update(loader.batch_size)
-            
             colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors, "xyzs":xyzs}

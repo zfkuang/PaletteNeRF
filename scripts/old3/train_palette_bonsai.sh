@@ -1,6 +1,6 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=6 python main_palette.py \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
 ../data/mip360/kitchen \
 ./results/nerf_kitchen/version_6/checkpoints/ngp_ep0615.pth \
 --fp16 \

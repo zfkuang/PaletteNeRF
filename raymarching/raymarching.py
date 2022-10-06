@@ -290,6 +290,56 @@ class _composite_rays_train(Function):
 
 composite_rays_train = _composite_rays_train.apply
 
+
+class _composite_rays_flex_train(Function):
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, sigmas, input, deltas, rays, T_thresh=1e-4):
+        ''' composite rays' rgbs, according to the ray marching formula.
+        Args:
+            input: float, [M, n_channel]
+            sigmas: float, [M,]
+            deltas: float, [M, 2]
+            rays: int32, [N, 3]
+        Returns:
+            output: float, [n_channel, 3], the RGB channel (after multiplying alpha!)
+        '''
+        
+        sigmas = sigmas.contiguous()
+        input = input.contiguous()
+
+        M = sigmas.shape[0]
+        N = rays.shape[0]
+        n_channel = input.shape[-1]
+
+        output = torch.empty(N, n_channel, dtype=sigmas.dtype, device=sigmas.device)
+
+        _backend.composite_rays_flex_train_forward(sigmas, input, deltas, rays, M, N, n_channel, T_thresh, output)
+
+        ctx.save_for_backward(sigmas, input, deltas, rays, output)
+        ctx.dims = [M, N, n_channel, T_thresh]
+
+        return output
+    
+    @staticmethod
+    @custom_bwd
+    def backward(ctx, grad_output):
+
+        # NOTE: grad_depth is not used now! It won't be propagated to sigmas.
+
+        grad_output = grad_output.contiguous()
+
+        sigmas, input, deltas, rays, output = ctx.saved_tensors
+        M, N, n_channel, T_thresh = ctx.dims
+   
+        grad_input = torch.zeros_like(input)
+
+        _backend.composite_rays_flex_train_backward(grad_output, sigmas, input, deltas, rays, output, M, N, n_channel, T_thresh, grad_input)
+
+        return None, grad_input, None, None, None
+
+composite_rays_flex_train = _composite_rays_flex_train.apply
+
 # ----------------------------------------
 # infer functions
 # ----------------------------------------
@@ -371,3 +421,27 @@ class _composite_rays(Function):
 
 
 composite_rays = _composite_rays.apply
+
+class _composite_rays_flex(Function):
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32) # need to cast sigmas & rgbs to float
+    def forward(ctx, n_alive, n_step, n_channel, rays_alive, rays_t, sigmas, input, deltas, weights_sum, output, T_thresh=1e-2):
+        ''' composite rays' rgbs, according to the ray marching formula. (for inference)
+        Args:
+            n_alive: int, number of alive rays
+            n_step: int, how many steps we march
+            n_channel: int, how many channel does the input have
+            rays_alive: int, [n_alive], the alive rays' IDs in N (N >= n_alive)
+            rays_t: float, [N], the alive rays' time
+            sigmas: float, [n_alive * n_step,]
+            input: float, [n_alive * n_step, n_channel]
+            deltas: float, [n_alive * n_step, 2], all generated points' deltas (here we record two deltas, the first is for RGB, the second for depth).
+            weights_sum: float, [N,], the alpha channel
+        In-place Outputs:
+            output: float, [N, n_channel], the RGB channel (after multiplying alpha!)
+        '''
+        _backend.composite_rays_flex(n_alive, n_step, n_channel, T_thresh, rays_alive, rays_t, sigmas, input, deltas, weights_sum, output)
+        return tuple()
+
+
+composite_rays_flex = _composite_rays_flex.apply

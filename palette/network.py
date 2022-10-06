@@ -145,16 +145,8 @@ class PaletteNetwork(PaletteRenderer):
 
         #sigma = F.relu(h[..., 0])
         sigma = trunc_exp(h[..., 0])
-        geo_feat = h[..., 1:]
+        geo_feat = h[..., 1:].detach()
 
-        # color
-        
-        h = torch.cat([self.encoder_dir(d), geo_feat], dim=-1)
-        for l in range(self.num_layers_color):
-            h = self.color_net[l](h)
-            if l != self.num_layers_color - 1:
-                h = F.relu(h, inplace=True)
-        
         # sigmoid activation for rgb
         d_color, omega, color, diffuse = self.color(x, d, geo_feat=geo_feat)
         return sigma, d_color, omega, color, diffuse

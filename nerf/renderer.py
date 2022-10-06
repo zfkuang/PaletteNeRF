@@ -373,6 +373,7 @@ class NeRFRenderer(nn.Module):
         
         results['depth'] = depth
         results['image'] = image
+        results['weights_sum'] = weights_sum
 
         return results
 

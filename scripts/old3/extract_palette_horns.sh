@@ -1,11 +1,11 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=4 python main_palette.py \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
 ../data/nerf_llff_data/horns \
-./results/nerf_horns/version_1/checkpoints/ngp_ep0556.pth \
--O \
---bound 2 \
---scale 0.16 \
+./results/nerf_horns/version_5/checkpoints/ngp_ep0556.pth \
+--fp16 \
+--preload \
+--bound 4 \
 --dt_gamma 0 \
 --extract_palette \
 

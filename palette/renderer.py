@@ -295,7 +295,7 @@ class PaletteRenderer(nn.Module):
             omega_diff = omega_diff.reshape(N, -1, self.num_basis, 1)
             diffuse_diff = diffuse_diff.reshape(N, -1, 3)
             
-            rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05).norm(dim=-1, keepdim=True)**2 / 1
+            rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
             smooth_weight = (xyzs_weight + rgb_weight).detach()
             smooth_weight = torch.exp(-smooth_weight)
             smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
@@ -430,19 +430,135 @@ class PaletteRenderer(nn.Module):
         results = {}
 
         if self.training:
-            # CUDA-based training not supported
-            raise ValueError("CUDA rays not supported in training")
+            # setup counter
+            counter = self.step_counter[self.local_step % 16]
+            counter.zero_() # set to 0
+            self.local_step += 1
+
+            xyzs, dirs, deltas, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, counter, self.mean_count, perturb, 128, force_all_rays, dt_gamma, max_steps)
+            M = xyzs.shape[0]
+
+            #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
+            sigmas, d_color, omega, dir_color, diffuse = self(xyzs, dirs)
+            # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
+            # sigmas = density_outputs['sigma']
+            # rgbs = self.color(xyzs, dirs, **density_outputs)
+            sigmas = self.density_scale * sigmas
+            sigmas = sigmas.detach()
+
+            d_color = d_color.reshape(M, self.num_basis, 3)
+            omega = omega.reshape(M, self.num_basis, 1)
+            dir_color = dir_color.reshape(M, 3)
+            diffuse = diffuse.reshape(M, 3)
+
+            basis_color = self.basis_color[None,:,:].clamp(0, 1)
+            if self.freeze_basis_color:
+                basis_color = basis_color.detach()
+
+            if self.opt.multiply_delta:
+                final_color = (basis_color*d_color).clamp(0, 1)
+            else:
+                final_color = (basis_color+d_color).clamp(0, 1)
+            basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
+
+            rgbs = basis_rgb.sum(dim=-2) + dir_color # (N_rays, N_samples_, 3)
+
+            #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
+
+            weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, deltas, rays, T_thresh)
+
+            omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
+            direct_rgb = diffuse+dir_color
+            basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
+            delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+            dir_rgb_norm = dir_color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+
+            # _, _, direct_rgb_map = raymarching.composite_rays_train(sigmas, direct_rgb, deltas, rays, T_thresh)
+
+            # _, _, dir_rgb_map = raymarching.composite_rays_train(sigmas, dir_color, deltas, rays, T_thresh)
+            # norm_rgb = torch.cat([omega_norm, delta_rgb_norm, dir_rgb_norm], dim=-1)
+            # _, _, norm_rgb_map = raymarching.composite_rays_train(sigmas, norm_rgb, deltas, rays, T_thresh)
+            # omega_norm_map, delta_rgb_norm_map, dir_rgb_norm_map = norm_rgb_map.permute(1, 0)
+
+            if self.require_smooth_loss:
+                xyzs_diff = (xyzs + torch.rand_like(xyzs)*0.05).clamp(-self.bound, self.bound)
+                xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
+                _, d_color_diff, omega_diff, _, diffuse_diff =  self(xyzs_diff, dirs)
+                d_color_diff = d_color_diff.reshape(M, self.num_basis, 3)
+                omega_diff = omega_diff.reshape(M, self.num_basis, 1)
+                diffuse_diff = diffuse_diff.reshape(M, 3)
+                
+                rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
+                smooth_weight = (xyzs_weight + rgb_weight).detach()
+                smooth_weight = torch.exp(-smooth_weight)
+                smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
+
+                # norm_rgb_2 = torch.cat([smooth_norm, smooth_norm, smooth_norm], dim=-1)
+                # _, _, norm_rgb_map_2 = raymarching.composite_rays_train(sigmas, norm_rgb_2, deltas, rays, T_thresh)
+                # smooth_norm_map = norm_rgb_map_2[...,0:1]
+                # smooth_norm_map = smooth_norm_map.view(*prefix)
+            else:
+                # smooth_norm_map = None
+                smooth_norm = torch.zeros_like(omega_norm)
+
+            # basis_acc_map_list = []
+            # for i in range(0, self.opt.num_basis, 3):
+            #     st = min(self.opt.num_basis-3, i)
+            #     ln = 3-min(3, self.opt.num_basis-i)
+            #     basis_acc = omega[...,st:st+3,0]         
+            #     _, _, basis_acc_map = raymarching.composite_rays_train(sigmas, basis_acc, deltas, rays, T_thresh)
+            #     basis_acc_map_list.append(basis_acc_map[...,ln:])
+            # basis_acc_map = torch.cat(basis_acc_map_list, dim=-1)
+
+            all_buffer = torch.cat([omega_norm, dir_rgb_norm, delta_rgb_norm, smooth_norm, dir_color, direct_rgb, omega[...,0]], axis=-1)
+            all_map = raymarching.composite_rays_flex_train(sigmas, all_buffer, deltas, rays, T_thresh)
+            omega_norm_map = all_map[...,0:1]
+            dir_rgb_norm_map = all_map[...,1:2]
+            delta_rgb_norm_map = all_map[...,2:3]
+            smooth_norm_map = all_map[...,3:4]
+            dir_rgb_map = all_map[...,4:7]
+            direct_rgb_map = all_map[...,7:10]
+            basis_acc_map = all_map[...,10:10+self.opt.num_basis]
+
+            image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
+            depth = torch.clamp(depth - nears, min=0) / (fars - nears)
+            image = image.view(*prefix, 3)
+            depth = depth.view(*prefix)
+
+            direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
+            omega_norm_map = omega_norm_map.view(*prefix)
+            dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
+            delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
+            smooth_norm_map = smooth_norm_map.view(*prefix)
+            dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+            direct_rgb_map = direct_rgb_map.view(*prefix, 3)
+            basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
+
+            results['depth'] = depth
+            results['image'] = image
+            results['weights_sum'] = weights_sum
+            results['smooth_norm'] = smooth_norm_map
+            results['omega_norm'] = omega_norm_map
+            results['dir_norm'] = dir_rgb_norm_map
+            results['delta_norm'] = delta_rgb_norm_map
+            results['direct_rgb'] = direct_rgb_map
+            results['basis_acc'] = basis_acc_map
         else:
             # allocate outputs 
             # if use autocast, must init as half so it won't be autocasted and lose reference.
             #dtype = torch.half if torch.is_autocast_enabled() else torch.float32
             # output should always be float32! only network inference uses half.
             dtype = torch.float32
-            
+
             weights_sum = torch.zeros(N, dtype=dtype, device=device)
             depth = torch.zeros(N, dtype=dtype, device=device)
             image = torch.zeros(N, 3, dtype=dtype, device=device)
             
+            dir_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
+            direct_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
+            basis_rgb_map = torch.zeros(N, 3*self.opt.num_basis, dtype=dtype, device=device)
+            basis_acc_map = torch.zeros(N, self.opt.num_basis, dtype=dtype, device=device)
+
             n_alive = N
             rays_alive = torch.arange(n_alive, dtype=torch.int32, device=device) # [N]
             rays_t = nears.clone() # [N]
@@ -462,14 +578,15 @@ class PaletteRenderer(nn.Module):
                 n_step = max(min(N // n_alive, 8), 1)
 
                 xyzs, dirs, deltas = raymarching.march_rays(n_alive, n_step, rays_alive, rays_t, rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, 128, perturb if step == 0 else False, dt_gamma, max_steps)
-                
-                sigmas, d_color, omega, color, diffuse = self(xyzs, dirs)
-                d_color = d_color.reshape(xyzs.shape[0], -1, self.num_basis, 3)
-                omega = omega.reshape(xyzs.shape[0], -1, self.num_basis, 1)
-                color = color.reshape(xyzs.shape[0], -1, 3)
-                diffuse = diffuse.reshape(xyzs.shape[0], -1, 3)
+                M = xyzs.shape[0]
 
-                basis_color = self.basis_color[None,None,:,:].clamp(0, 1)
+                sigmas, d_color, omega, dir_color, diffuse = self(xyzs, dirs)
+                d_color = d_color.reshape(M, self.num_basis, 3)
+                omega = omega.reshape(M, self.num_basis, 1)
+                dir_color = dir_color.reshape(M, 3)
+                diffuse = diffuse.reshape(M, 3)
+
+                basis_color = self.basis_color[None,:,:].clamp(0, 1)
                 
                 if self.opt.multiply_delta:
                     final_color = (basis_color*d_color).clamp(0, 1)
@@ -477,18 +594,30 @@ class PaletteRenderer(nn.Module):
                     final_color = (basis_color+d_color).clamp(0, 1)
                 basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
 
-                rgbs = basis_rgb.sum(dim=-2) + color # (N_rays, N_samples_, 3)
+                rgbs = basis_rgb.sum(dim=-2) + dir_color # (N_rays, N_samples_, 3)
 
                 # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
                 # sigmas = density_outputs['sigma']
                 # rgbs = self.color(xyzs, dirs, **density_outputs)
                 sigmas = self.density_scale * sigmas
 
+                if not self.opt.gui:
+                    ### palette parts
+
+                    # dir_Color, direct_rgb, basis_rgb
+                    direct_rgb = diffuse+dir_color
+                    basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
+                    
+                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, direct_rgb, deltas, weights_sum, direct_rgb_map, T_thresh)
+                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, dir_color, deltas, weights_sum, dir_rgb_map, T_thresh)
+                    raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis, rays_alive, rays_t, sigmas, omega, deltas, weights_sum, basis_acc_map, T_thresh)
+                    raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, basis_rgb, deltas, weights_sum, basis_rgb_map, T_thresh)
+
+                # IMPORTANT: make sure this composite rays is execute after all composite rays flex operations
                 raymarching.composite_rays(n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
-
-                rays_alive = rays_alive[rays_alive >= 0]
-
                 #print(f'step = {step}, n_step = {n_step}, n_alive = {n_alive}, xyzs: {xyzs.shape}')
+                
+                rays_alive = rays_alive[rays_alive >= 0]
 
                 step += n_step
 
@@ -496,10 +625,20 @@ class PaletteRenderer(nn.Module):
             depth = torch.clamp(depth - nears, min=0) / (fars - nears)
             image = image.view(*prefix, 3)
             depth = depth.view(*prefix)
-        
-        results['depth'] = depth
-        results['image'] = image
-        results['weights_sum'] = weights_sum
+            results['depth'] = depth
+            results['image'] = image
+            results['weights_sum'] = weights_sum
+
+            if not self.opt.gui:
+                direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
+                dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+                direct_rgb_map = direct_rgb_map.view(*prefix, 3)
+                basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
+                basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
+                results['direct_rgb'] = direct_rgb_map
+                results['dir_rgb'] = dir_rgb_map
+                results['basis_rgb'] = basis_rgb_map
+                results['basis_acc'] = basis_acc_map
 
         return results
 

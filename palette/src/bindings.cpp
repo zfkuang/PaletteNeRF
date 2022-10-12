@@ -98,5 +98,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 m.def("compute_RGB_histogram", &::compute_RGB_histogram, R"pbdoc(
     compute the histogram of RGB and weight data
 )pbdoc");
+m.def("rgb_to_hsv", &rgb_to_hsv, "convert rgb to hsv (CUDA)");
+m.def("hsv_to_rgb", &hsv_to_rgb, "convert hsv to rgb (CUDA)");
 
 } // PYBIND11_MODULE

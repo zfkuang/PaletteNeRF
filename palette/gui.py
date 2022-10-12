@@ -5,6 +5,7 @@ import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
 from nerf.utils import *
+from .utils import RegionEdit
 
 
 class OrbitCamera:
@@ -77,6 +78,7 @@ class PaletteGUI:
         self.downscale = 1
         self.train_steps = 16
 
+        self.trainer.edit = RegionEdit(opt)
         self.load_palette()
 
         dpg.create_context()
@@ -450,8 +452,22 @@ class PaletteGUI:
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
 
+        def callback_select_point(sender, app_data):
+
+            if not dpg.is_item_focused("_primary_window"):
+                return
+
+            x = app_data[1]
+            y = app_data[2]
+
+            print("x, y={1}, {2}".format(x, y))
+            self.need_update = True
+
+            if self.debug:
+                dpg.set_value("_log_pose", str(self.cam.pose))
 
         with dpg.handler_registry():
+            dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Right, callback=callback_select_point)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, callback=callback_camera_drag_rotate)
             dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)

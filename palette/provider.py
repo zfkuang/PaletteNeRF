@@ -12,7 +12,7 @@ import math
 
 import torch
 from torch.utils.data import DataLoader
-
+import torch.nn.functional as F
 from .utils import get_rays
 
 
@@ -229,6 +229,10 @@ class NeRFDataset:
             
             self.poses = []
             self.images = []
+            if self.opt.pred_clip and type == 'train':
+                self.feat_images = []
+            else:
+                self.feat_images = None
             for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
                 f_path = os.path.join(self.root_path, f['file_path'])
                 if self.mode == 'blender' and '.' not in os.path.basename(f_path):
@@ -258,12 +262,21 @@ class NeRFDataset:
                     image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
                 image = image.astype(np.float32) / 255 # [H, W, 3/4]
 
+                if self.opt.pred_clip and type == 'train':
+                    feat_image = np.load(os.path.join(self.root_path, 'lseg_feature', os.path.basename(f_path)+".npy")) # [H, W, D_clip]
+                    feat_image = torch.from_numpy(feat_image)
+                    feat_image = feat_image.permute(2, 0, 1)[None,...]
+                    feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
+                    self.feat_images.append(feat_image[0].permute(1, 2, 0))
+
                 self.poses.append(pose)
                 self.images.append(image)
             
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
         if self.images is not None:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]
+        if self.feat_images is not None:
+            self.feat_images = torch.stack(self.feat_images, dim=0) #  # [N, H, W, D_clip]
         
         # calculate mean radius of all camera poses
         self.radius = self.poses[:, :3, 3].norm(dim=-1).mean(0).item()
@@ -290,6 +303,13 @@ class NeRFDataset:
                 else:
                     dtype = torch.float
                 self.images = self.images.to(dtype).to(self.device)
+            if self.feat_images is not None:
+                # TODO: linear use pow, but pow for half is only available for torch >= 1.10 ?
+                if self.fp16:
+                    dtype = torch.half
+                else:
+                    dtype = torch.float
+                self.feat_images = self.feat_images.to(dtype).to(self.device)
             if self.error_map is not None:
                 self.error_map = self.error_map.to(self.device)
 
@@ -352,6 +372,13 @@ class NeRFDataset:
                 C = images.shape[-1]
                 images = torch.gather(images.view(B, -1, C), 1, torch.stack(C * [rays['inds']], -1)) # [B, N, 3/4]
             results['images'] = images
+
+        if self.feat_images is not None:
+            feat_images = self.feat_images[index].to(self.device) # [B, H, W, 3/4]
+            if self.training:
+                C = feat_images.shape[-1]
+                feat_images = torch.gather(feat_images.view(B, -1, C), 1, torch.stack(C * [rays['inds']], -1)) # [B, N, 3/4]
+            results['feat_images'] = feat_images
         
         # need inds to update error_map
         if error_map is not None:

@@ -23,6 +23,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 import torch.distributed as dist
+from torch.autograd import Function
 from torch.cuda.amp import custom_bwd, custom_fwd
 from torch.utils.data import Dataset, DataLoader
 
@@ -38,6 +39,8 @@ import lpips
 
 from typing import Tuple
 from .rgbsg import *
+
+from sklearn.decomposition import PCA
 
 try:
     import _nbd_palette as _backend
@@ -182,7 +185,47 @@ def palette_extraction(
     np.savez(os.path.join(output_dir, 'palette.npz'), palette=palette_rgb)
     np.savez(os.path.join(output_dir, 'hist_weights.npz'), hist_weights=hist_weights)
 
+class _rgb_to_hsv(Function):
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, input):
 
+        if not input.is_cuda: input = input.cuda()
+        if not output.is_cuda: output = output.cuda()
+        
+        prefix = input.shape[:-1]
+        input = input.contiguous().view(-1, 3)
+
+        n_rays = input.shape[0]
+        output = torch.empty(n_rays, 3, device=input.device, dtype=input.dtype)
+
+        _backend.rgb_to_hsv(n_rays, input, output)
+        output = output.reshape(*prefix, 3)
+
+        return output
+
+rgb_to_hsv = _rgb_to_hsv.apply
+
+class _hsv_to_rgb(Function):
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, input):
+
+        if not input.is_cuda: input = input.cuda()
+        if not output.is_cuda: output = output.cuda()
+        
+        prefix = input.shape[:-1]
+        input = input.contiguous().view(-1, 3)
+
+        n_rays = input.shape[0]
+        output = torch.empty(n_rays, 3, device=input.device, dtype=input.dtype)
+
+        _backend.hsv_to_rgb(n_rays, input, output)
+        output = output.reshape(*prefix, 3)
+
+        return output
+
+hsv_to_rgb = _hsv_to_rgb.apply
 
 class PaletteTrainer(object):
     def __init__(self, 
@@ -346,6 +389,7 @@ class PaletteTrainer(object):
         rays_d = data['rays_d'] # [B, N, 3]
 
         images = data['images'] # [B, N, 3/4]
+        gt_clip_feat = data['feat_images']
 
         B, N, C = images.shape
 
@@ -373,8 +417,15 @@ class PaletteTrainer(object):
         
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
-        loss_direct = self.criterion(outputs['direct_rgb'], gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
+        loss_direct = self.criterion(outputs['direct_rgb'], gt_rgb).mean() # [B, N, 3] --> [B, N]
         loss += loss_direct
+
+        # pred clip feature
+        if self.opt.pred_clip:
+            pred_clip_feat = outputs['clip_feat']
+            loss_clip_feat = self.criterion(pred_clip_feat, gt_clip_feat).mean()
+            loss += loss_clip_feat
+
         # patch-based rendering
         if self.opt.patch_size > 1:
             gt_rgb = gt_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
@@ -415,7 +466,8 @@ class PaletteTrainer(object):
         loss_dict['loss_smooth'] =  self.opt.lambda_smooth * smooth_loss
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
         loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
-        loss_dict['loss_direct'] = loss_direct.mean()
+        loss_dict['loss_direct'] = loss_direct
+        loss_dict['loss_clip_feat'] = loss_clip_feat
 
         # special case for CCNeRF's rank-residual training
         if len(loss.shape) == 3: # [K, B, N]
@@ -671,6 +723,7 @@ class PaletteTrainer(object):
                     save_path_basis_acc = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_acc.png')
                     save_path_basis_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_color.png')
                     save_path_dir_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_dir_color.png')
+                    save_path_clip_feat = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_clip_feat.png')
 
                     #self.log(f"==> Saving validation image to {save_path}")
                     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -692,6 +745,15 @@ class PaletteTrainer(object):
                     pred_direct_color = outputs['direct_rgb'][0].detach().cpu().numpy()
                     pred_direct_color = pred_direct_color.reshape(pred.shape[0], pred.shape[1], 3)
                     pred_direct_color = (pred_direct_color.clip(0,1) * 255).astype(np.uint8)
+                    
+                    pred_clip_feat = outputs['clip_feat'][0].detach().cpu().numpy()
+                    pred_clip_feat_flat = pred_clip_feat.reshape(-1, self.opt.clip_dim)
+                    pca2 = PCA(n_components=3)
+                    # pca.fit(outputs_flat)
+                    pred_clip_feat_flat = pca2.fit_transform(pred_clip_feat_flat)
+                    pred_clip_feat = pred_clip_feat_flat.reshape(pred.shape[0], pred.shape[1], -1)
+                    pred_clip_feat = ((pred_clip_feat+1)/2*255).clip(0, 255).astype(np.uint8)
+                    cv2.imwrite(save_path_clip_feat, cv2.cvtColor(pred_clip_feat, cv2.COLOR_RGB2BGR))
 
                     pred_basis_img = []
                     pred_basis_acc = []
@@ -862,7 +924,7 @@ class PaletteTrainer(object):
             W_p = W_p//self.opt.num_basis
 
             def mwrite(filename, frames):
-                frames = frames[:, frames.shape[1]//2*2, frames.shape[2]//2*2]
+                frames = frames[:, :frames.shape[1]//2*2, :frames.shape[2]//2*2]
                 imageio.mimwrite(filename, frames, fps=25, quality=8, macro_block_size=1)
             mwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds)
             mwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth)
@@ -1106,3 +1168,4 @@ class PaletteTrainer(object):
                 self.model.mean_density = checkpoint_dict['mean_density']
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 self.model.update_extra_state()
+

@@ -31,6 +31,7 @@ class PaletteNetwork(PaletteRenderer):
         self.geo_feat_dim = geo_feat_dim
         self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
         self.encoder_palette, self.in_dim_palette = get_encoder(encoding, desired_resolution=2048 * bound)
+        self.encoder_clip, self.in_dim_clip = get_encoder(encoding, desired_resolution=2048 * bound)
 
         self.num_basis = opt.num_basis
 
@@ -107,6 +108,22 @@ class PaletteNetwork(PaletteRenderer):
             self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
         self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis, bias=False), nn.Softplus())
 
+        if opt.pred_clip:
+            clip_net = []
+            for l in range(num_layers):
+                if l == 0:
+                    in_dim = self.in_dim_clip
+                else:
+                    in_dim = hidden_dim
+                
+                if l == num_layers - 1:
+                    out_dim = opt.clip_dim # 1 sigma + 15 SH features for color
+                else:
+                    out_dim = hidden_dim
+                
+                clip_net.append(nn.Linear(in_dim, out_dim, bias=False))
+            self.clip_net = nn.ModuleList(clip_net)
+
         # background network
         if self.bg_radius > 0:
             self.num_layers_bg = num_layers_bg        
@@ -147,9 +164,20 @@ class PaletteNetwork(PaletteRenderer):
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:].detach()
 
+        if self.opt.pred_clip:
+            h = self.encoder_clip(x, bound=self.bound)
+            for l in range(self.num_layers):
+                h = self.clip_net[l](h)
+                if l != self.num_layers - 1:
+                    h = F.relu(h, inplace=True)
+            clip_feat = h
+        else:
+            clip_feat = torch.zeros_like(sigma[...,None].repeat(1, self.opt.clip_dim))
+        #sigma = F.relu(h[..., 0])
+
         # sigmoid activation for rgb
         d_color, omega, color, diffuse = self.color(x, d, geo_feat=geo_feat)
-        return sigma, d_color, omega, color, diffuse
+        return sigma, clip_feat, d_color, omega, color, diffuse
 
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
@@ -261,7 +289,9 @@ class PaletteNetwork(PaletteRenderer):
         params = [
             {'params': self.encoder.parameters(), 'lr': lr},
             {'params': self.encoder_palette.parameters(), 'lr': lr},
+            {'params': self.encoder_clip.parameters(), 'lr': lr},
             {'params': self.sigma_net.parameters(), 'lr': lr},
+            {'params': self.clip_net.parameters(), 'lr': lr}, 
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
             {'params': self.diff_net.parameters(), 'lr': lr}, 

@@ -143,7 +143,7 @@ class PaletteGUI:
             if self.dynamic_resolution:
                 # max allowed infer time per-frame is 200 ms
                 full_t = t / (self.downscale ** 2)
-                downscale = min(1, max(1/16, math.sqrt(50 / full_t)))
+                downscale = min(1, max(1/4, math.sqrt(100 / full_t)))
                 if downscale > self.downscale * 1.2 or downscale < self.downscale * 0.8:
                     self.downscale = downscale
 

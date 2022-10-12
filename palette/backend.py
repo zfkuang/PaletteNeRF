@@ -34,6 +34,7 @@ _backend = load(name='_nbd_palette',
                 extra_cuda_cflags=nvcc_flags,
                 sources=[os.path.join(_src_path, 'src', f) for f in [
                     'bindings.cpp',
+                    'palette.cu'
                 ]],
                 )
 

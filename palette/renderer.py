@@ -81,36 +81,55 @@ class RegionEdit(nn.Module):
         self.mean_clip = None
         self.std_xyz = 1
         self.std_clip = 1
+        self.weight_mode = False
         self.delta_hsv = torch.zeros(self.opt.num_basis, 3)
 
     def update_cent(self, mean_xyz, mean_clip):     
-        self.mean_xyz = mean_xyz
-        self.mean_clip = mean_clip
+        self.mean_xyz = mean_xyz[None,...]
+        self.mean_clip = mean_clip[None,...]
     
-    def update_std(self, std_xyz, std_clip):
-        self.std_xyz = std_xyz
-        self.std_clip = std_clip
+    def update_std(self, std_xyz=None, std_clip=None):
+        if std_xyz is not None:
+            self.std_xyz = std_xyz
+        if std_clip is not None:
+            self.std_clip = std_clip
 
-    def update_delta(self, basis_id, h, s, v):
-        self.delta_hsv[basis_id, 0] = h
-        self.delta_hsv[basis_id, 1] = s
-        self.delta_hsv[basis_id, 2] = v
+    def update_delta(self, rgb_orig, rgb_new):
+        # import pdb
+        # pdb.set_trace()
+        if rgb_orig.device != self.delta_hsv.device:
+            self.delta_hsv = self.delta_hsv.type_as(rgb_orig)
+        rgb_all = torch.cat([rgb_orig, rgb_new], dim=0)
+        hsv_all = rgb_to_hsv(rgb_all)
+        hsv_orig = hsv_all[:self.opt.num_basis]
+        hsv_new = hsv_all[self.opt.num_basis:]
+
+        self.delta_hsv[:, 0] = torch.fmod((hsv_new[:,0]-hsv_orig[:,0]+360), 360)
+        self.delta_hsv[:, 1] = hsv_new[:,1]-hsv_orig[:,1]
+        self.delta_hsv[:, 2] = hsv_new[:,2]-hsv_orig[:,2]
+        # import pdb
+        # pdb.set_trace()
 
     def forward(self, rgbs, xyz=None, clip_feat=None):
         hsv = rgb_to_hsv(rgbs)
         if rgbs.device != self.delta_hsv.device:
             self.delta_hsv = self.delta_hsv.type_as(rgbs)
-        weight = torch.ones_like(rgbs[...,0])
+        weight = torch.ones_like(rgbs[...,0:1,0])
         if xyz is not None and self.mean_xyz is not None:
-            weight *= torch.exp(-(xyz-self.mean_xyz)**2.sum(dim=-1)/self.std_xyz)
+            weight *= torch.exp(-((xyz-self.mean_xyz)**2.).sum(dim=-1, keepdim=True)/self.std_xyz)
         if clip_feat is not None and self.mean_clip is not None:
-            weight *= torch.exp(-(clip_feat-self.mean_clip)**2.sum(dim=-1)/self.std_clip)
+            weight *= torch.exp(-((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)/self.std_clip)
 
-        hsv[...,0] = torch.fmod((hsv[...,0]+weight*self.delta_hsv[...,0]+360), 360)
-        hsv[...,1] = torch.clip((hsv[...,1]+weight*self.delta_hsv[...,1]), 0, 100)
-        hsv[...,2] = torch.clip((hsv[...,2]+weight*self.delta_hsv[...,2]), 0, 100)
+        hsv_new = hsv.clone()
+        hsv_new[...,0] = torch.fmod((hsv[...,0]+self.delta_hsv[...,0]+360), 360)
+        hsv_new[...,1] = torch.clip((hsv[...,1]+self.delta_hsv[...,1]), 0, 100)
+        hsv_new[...,2] = torch.clip((hsv[...,2]+self.delta_hsv[...,2]), 0, 100)
 
-        return hsv_to_rgb(hsv)
+        rgb_new = hsv_to_rgb(hsv_new)
+        if self.weight_mode:
+            return weight[...,None].repeat(1, self.opt.num_basis, 3) 
+        else:
+            return torch.lerp(rgbs, rgb_new, weight[...,None])
 
 class PaletteRenderer(nn.Module):
     def __init__(self,
@@ -662,7 +681,8 @@ class PaletteRenderer(nn.Module):
                     raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, dir_color, deltas, weights_sum, dir_rgb_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis, rays_alive, rays_t, sigmas, omega, deltas, weights_sum, basis_acc_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, basis_rgb, deltas, weights_sum, basis_rgb_map, T_thresh)
-                    raymarching.composite_rays_flex(n_alive, n_step, self.opt.clip_dim, rays_alive, rays_t, sigmas, clip_feat, deltas, weights_sum, clip_feat_map, T_thresh)
+                
+                raymarching.composite_rays_flex(n_alive, n_step, self.opt.clip_dim, rays_alive, rays_t, sigmas, clip_feat, deltas, weights_sum, clip_feat_map, T_thresh)
 
                 # IMPORTANT: make sure this composite rays is execute after all composite rays flex operations
                 raymarching.composite_rays(n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
@@ -680,18 +700,19 @@ class PaletteRenderer(nn.Module):
             results['image'] = image
             results['weights_sum'] = weights_sum
 
+            clip_feat_map = clip_feat_map.view(*prefix, self.opt.clip_dim)
+            results['clip_feat'] = clip_feat_map
+
             if not self.opt.gui:
                 direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
                 dir_rgb_map = dir_rgb_map.view(*prefix, 3)
                 direct_rgb_map = direct_rgb_map.view(*prefix, 3)
                 basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
                 basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
-                clip_feat_map = clip_feat_map.view(*prefix, self.opt.clip_dim)
                 results['direct_rgb'] = direct_rgb_map
                 results['dir_rgb'] = dir_rgb_map
                 results['basis_rgb'] = basis_rgb_map
                 results['basis_acc'] = basis_acc_map
-                results['clip_feat'] = clip_feat_map
 
         return results
 

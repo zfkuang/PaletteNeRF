@@ -157,7 +157,8 @@ def palette_extraction(
 
     ## convex hull simplification
     start = time.time()
-
+    import pdb
+    pdb.set_trace()
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
@@ -165,16 +166,16 @@ def palette_extraction(
         target_size=palette_size)
 
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
-    if use_normalize:
-        hist_rgb = hist_rgb+0.05
-        hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
-        hist_rgb = hist_rgb / hist_rgb_norm
+    # if use_normalize:
+    #     hist_rgb = hist_rgb+0.05
+    #     hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
+    #     hist_rgb = hist_rgb / hist_rgb_norm
 
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette
     hist_weights = hist_weights.reshape([32,32,32,palette_rgb.shape[0]])
-    if use_normalize:
-        hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
+    # if use_normalize:
+    #     hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
     ## Generate weight
 
     ## save palette
@@ -1021,7 +1022,8 @@ class PaletteTrainer(object):
                     preds = srgb_to_linear(preds)
 
                 preds_norm = preds+0.05
-                preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
+                preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
+                # preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
                 preds_weight = outputs['preds_weight']

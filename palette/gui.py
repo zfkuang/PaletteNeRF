@@ -5,7 +5,7 @@ import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
 from nerf.utils import *
-from .utils import RegionEdit
+from .renderer import RegionEdit
 
 
 class OrbitCamera:

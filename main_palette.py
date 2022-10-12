@@ -82,6 +82,10 @@ if __name__ == '__main__':
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
+    # CLIP feat options
+    parser.add_argument('--pred_clip', action='store_true', help="predict clip featuer")
+    parser.add_argument("--clip_dim", type=int, default=16, help='dimension of clip feature')
+
     opt = parser.parse_args()
 
 

@@ -5,7 +5,7 @@ import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
 from nerf.utils import *
-from .utils import RegionEdit
+from .renderer import RegionEdit
 
 
 class OrbitCamera:
@@ -70,6 +70,8 @@ class PaletteGUI:
             self.trainer.error_map = train_loader._data.error_map
 
         self.render_buffer = np.zeros((self.W, self.H, 3), dtype=np.float32)
+        self.selected_point = None
+        self.selected_pixel = None
         self.need_update = True # camera moved, should reset accumulation
         self.spp = 1 # sample per pixel
         self.mode = 'image' # choose from ['image', 'depth']
@@ -78,7 +80,7 @@ class PaletteGUI:
         self.downscale = 1
         self.train_steps = 16
 
-        self.trainer.edit = RegionEdit(opt)
+        self.trainer.model.edit = RegionEdit(opt)
         self.load_palette()
 
         dpg.create_context()
@@ -86,8 +88,8 @@ class PaletteGUI:
         self.test_step()
         
     def load_palette(self):
-        self.palette_mode = False
-        self.palette = self.trainer.model.basis_color.data
+        self.weight_mode = False
+        self.palette = self.trainer.model.basis_color.clone()
         self.origin_palette = self.palette.clone()
         # self.hist_weights = torch.from_numpy(hist_weights).float()
         # self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
@@ -127,7 +129,6 @@ class PaletteGUI:
         else:
             return np.expand_dims(outputs['depth'], -1).repeat(3, -1)
 
-    
     def test_step(self):
         # TODO: seems we have to move data from GPU --> CPU --> GPU?
         max_spp = self.opt.max_spp if self.dynamic_resolution else 1
@@ -150,6 +151,18 @@ class PaletteGUI:
                     self.downscale = downscale
 
             output_buffer = self.prepare_buffer(outputs)
+            if self.selected_pixel is not None:
+                y, x = self.selected_pixel
+                self.xyz = torch.from_numpy(outputs['xyz'][x, y]).type_as(self.palette)
+                self.clip_feat = torch.from_numpy(outputs['clip_feat'][x, y]).type_as(self.palette)
+                if self.xyz.isnan().sum() == 0: # valid point
+                    self.trainer.model.edit.update_cent(self.xyz, self.clip_feat)
+                    self.selected_point = self.xyz
+                self.selected_pixel = None
+            # depth = outputs['depth']
+            # clip_feature = outputs['clip_feature']
+            # import pdb
+            # pdb.set_trace()
             # recolor render buffer
             # if self.palette_mode:
             # with torch.no_grad():
@@ -361,20 +374,33 @@ class PaletteGUI:
 
                 def refresh_palette_color():
                     highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
-                    self.trainer.model.basis_color.data = self.palette.type_as(self.trainer.model.basis_color.data)
+                    self.trainer.model.edit.update_delta(self.origin_palette, self.palette)
+                    #self.trainer.model.basis_color.data = self.palette.type_as(self.trainer.model.basis_color.data)
                     dpg.set_value("_palette_color_editor", tuple(highlight_color))
 
-                def callback_set_palette_mode(sender, app_data):
-                    if self.palette_mode:
-                        self.palette_mode = False
+                def callback_set_weight_mode(sender, app_data):
+                    if self.weight_mode:
+                        self.weight_mode = False
                     else:
-                        self.palette_mode = True
+                        self.weight_mode = True
+                    self.trainer.model.edit.weight_mode = self.weight_mode
                     self.need_update = True
 
-                dpg.add_checkbox(label="palette mode", default_value=self.palette_mode, callback=callback_set_palette_mode)
+                dpg.add_checkbox(label="weight mode", default_value=self.weight_mode, callback=callback_set_weight_mode)
+                
+                def call_back_set_std_xyz(sender, app_data):
+                    self.trainer.model.edit.update_std(std_xyz=app_data)
+                    self.need_update = True
+                dpg.add_slider_float(label="std_xyz", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_std_xyz)
+                def call_back_set_std_clip(sender, app_data):
+                    self.trainer.model.edit.update_std(std_clip=app_data)
+                    self.need_update = True
+                dpg.add_slider_float(label="std_clip", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_std_clip)
 
                 def callback_reset_palette(sender, app_data):
-                    self.palette = self.origin_palette
+                    self.palette = self.origin_palette.clone()
                     refresh_palette_color()
                     self.need_update = True
                     
@@ -456,11 +482,23 @@ class PaletteGUI:
 
             if not dpg.is_item_focused("_primary_window"):
                 return
+            x, y = dpg.get_mouse_pos()
+            x = int(x)
+            y = int(y)
+            print("Selecting pixel: [%d, %d]"%(x, y))
+            self.selected_pixel = [x,y]
+            self.selected_point = None
+            self.need_update = True
 
-            x = app_data[1]
-            y = app_data[2]
+            if self.debug:
+                dpg.set_value("_log_pose", str(self.cam.pose))
 
-            print("x, y={1}, {2}".format(x, y))
+        def callback_clear_point(sender, app_data):
+
+            if not dpg.is_item_focused("_primary_window"):
+                return
+            self.selected_point = None
+            self.selected_pixel = None
             self.need_update = True
 
             if self.debug:
@@ -468,6 +506,7 @@ class PaletteGUI:
 
         with dpg.handler_registry():
             dpg.add_mouse_click_handler(button=dpg.mvMouseButton_Right, callback=callback_select_point)
+            dpg.add_mouse_double_click_handler(button=dpg.mvMouseButton_Right, callback=callback_clear_point)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Left, callback=callback_camera_drag_rotate)
             dpg.add_mouse_wheel_handler(callback=callback_camera_wheel_scale)
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)

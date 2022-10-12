@@ -191,7 +191,6 @@ class _rgb_to_hsv(Function):
     def forward(ctx, input):
 
         if not input.is_cuda: input = input.cuda()
-        if not output.is_cuda: output = output.cuda()
         
         prefix = input.shape[:-1]
         input = input.contiguous().view(-1, 3)
@@ -212,7 +211,6 @@ class _hsv_to_rgb(Function):
     def forward(ctx, input):
 
         if not input.is_cuda: input = input.cuda()
-        if not output.is_cuda: output = output.cuda()
         
         prefix = input.shape[:-1]
         input = input.contiguous().view(-1, 3)
@@ -965,22 +963,29 @@ class PaletteTrainer(object):
                 output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp, gui_mode=True)
         preds = output_dict['preds'].reshape(-1, rH, rW, 3).clamp(0, 1)
         preds_depth = output_dict['preds_depth'].reshape(-1, rH, rW)
-
+        pred_xyz = output_dict['preds_xyz'].reshape(-1, rH, rW, 3)
+        pred_clip_feat = output_dict['clip_feat'].reshape(-1, rH, rW, self.opt.clip_dim)
         # interpolation to the original resolution
         if downscale != 1:
             # TODO: have to permute twice with torch...
             preds = F.interpolate(preds.permute(0, 3, 1, 2), size=(H, W), mode='nearest').permute(0, 2, 3, 1).contiguous()
             preds_depth = F.interpolate(preds_depth.unsqueeze(1), size=(H, W), mode='nearest').squeeze(1)
+            pred_xyz = F.interpolate(pred_xyz.permute(0, 3, 1, 2), size=(H, W), mode='nearest').permute(0, 2, 3, 1).contiguous()
+            pred_clip_feat = F.interpolate(pred_clip_feat.permute(0, 3, 1, 2), size=(H, W), mode='nearest').permute(0, 2, 3, 1).contiguous()
 
         if self.opt.color_space == 'linear':
             preds = linear_to_srgb(preds)
 
         pred = preds[0].detach().cpu().numpy()
         pred_depth = preds_depth[0].detach().cpu().numpy()
+        pred_xyz = pred_xyz[0].detach().cpu().numpy()
+        pred_clip_feat = pred_clip_feat[0].detach().cpu().numpy()
 
         outputs = {
             'image': pred,
             'depth': pred_depth,
+            'xyz': pred_xyz,
+            'clip_feat': pred_clip_feat,
         }
 
         return outputs

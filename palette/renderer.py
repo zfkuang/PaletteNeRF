@@ -520,7 +520,7 @@ class PaletteRenderer(nn.Module):
                 final_color = (basis_color+d_color).clamp(0, 1)
             basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
 
-            rgbs = basis_rgb.sum(dim=-2) + dir_color # (N_rays, N_samples_, 3)
+            rgbs = basis_rgb.sum(dim=-2) + dir_color.detach() # (N_rays, N_samples_, 3)
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
 

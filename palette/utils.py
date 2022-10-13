@@ -157,25 +157,28 @@ def palette_extraction(
 
     ## convex hull simplification
     start = time.time()
-    import pdb
-    pdb.set_trace()
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
         error_thres=5.0/255.0,
         target_size=palette_size)
-
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
-    # if use_normalize:
-    #     hist_rgb = hist_rgb+0.05
-    #     hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
-    #     hist_rgb = hist_rgb / hist_rgb_norm
+    if use_normalize:
+        palette_rgb = palette_rgb[np.argsort(np.linalg.norm(palette_rgb, axis=-1))]
+        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # palette_rgb /= 5
+
+        # hist_rgb = hist_rgb+0.05
+        # hist_rgb_norm = hist_rgb.sum(axis=-1, keepdims=True)
+        # hist_rgb = hist_rgb / hist_rgb_norm
+        hist_rgb_norm = np.maximum(0.2, np.linalg.norm(hist_rgb, axis=-1, keepdims=True))
+        hist_rgb = hist_rgb / hist_rgb_norm
 
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette
     hist_weights = hist_weights.reshape([32,32,32,palette_rgb.shape[0]])
-    # if use_normalize:
-    #     hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
+    if use_normalize:
+        hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
     ## Generate weight
 
     ## save palette
@@ -1026,8 +1029,10 @@ class PaletteTrainer(object):
                 if self.opt.color_space == 'linear':
                     preds = srgb_to_linear(preds)
 
-                preds_norm = preds+0.05
-                preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
+                preds_norm = preds*5 
+                preds_norm = preds_norm / torch.clip(preds_norm.norm(dim=-1, keepdim=True), min=1)
+                # preds_norm = preds+0.02
+                # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
                 # preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
@@ -1044,10 +1049,10 @@ class PaletteTrainer(object):
                 all_preds_depth.append(preds_depth)
                 all_preds_norm.append(preds_norm)
                 pbar.update(loader.batch_size)
-            colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
-            xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
-            input_dict = {"colors":colors, "xyzs":xyzs}
-            palette_extraction(input_dict, save_path)
+            # colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
+            # xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
+            # input_dict = {"colors":colors, "xyzs":xyzs}
+            # palette_extraction(input_dict, save_path)
             colors_norm = torch.cat(all_preds_norm, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors_norm, "xyzs":xyzs}

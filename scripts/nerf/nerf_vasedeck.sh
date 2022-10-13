@@ -4,9 +4,9 @@ OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_nerf.py \
 ../data/vasedeck \
 --workspace nerf_vasedeck \
 --bound 2 \
---scale 0.32 \
---bg_radius 32 \
+--scale 0.16 \
 --dt_gamma 0 \
+--bg_radius 16 \
 -O \
 --gui \
 

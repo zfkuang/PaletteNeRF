@@ -1,17 +1,16 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=5 python main_palette.py \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=2 python main_palette.py \
 ../data/mip360/bonsai \
 ./results/nerf_bonsai/version_1/checkpoints/ngp_ep0589.pth \
 -O \
 --bound 2 \
 --scale 0.16 \
---dt_gamma 0 \
 --use_initialization_from_rgbxy \
 --model_mode palette \
 --use_normalized_palette \
 --multiply_delta \
---iters 150000 \
+--iters 90000 \
 --pred_clip \
 
 

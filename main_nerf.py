@@ -52,8 +52,8 @@ if __name__ == '__main__':
 
     ### GUI options
     parser.add_argument('--gui', action='store_true', help="start a GUI")
-    parser.add_argument('--W', type=int, default=1920, help="GUI width")
-    parser.add_argument('--H', type=int, default=1080, help="GUI height")
+    parser.add_argument('--W', type=int, default=960, help="GUI width")
+    parser.add_argument('--H', type=int, default=540, help="GUI height")
     parser.add_argument('--radius', type=float, default=5, help="default GUI camera radius from center")
     parser.add_argument('--fovy', type=float, default=50, help="default GUI camera fovy")
     parser.add_argument('--max_spp', type=int, default=64, help="GUI rendering max sample per pixel")

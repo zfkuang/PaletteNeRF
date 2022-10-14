@@ -189,7 +189,7 @@ if __name__ == '__main__':
 
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
-            use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=1)
+            use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
 
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
         # palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)

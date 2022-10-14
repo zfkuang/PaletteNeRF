@@ -1,11 +1,11 @@
 #! /bin/bash
 
 OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
-../data/mip360/bonsai \
-./results/nerf_bonsai/version_1/checkpoints/ngp_ep0589.pth \
+../data/mip360/kitchen \
+./results/nerf_kitchen/version_2/checkpoints/ngp_ep0369.pth \
 -O \
 --bound 2 \
---scale 0.16 \
+--scale 0.12 \
 --dt_gamma 0 \
 --extract_palette \
 

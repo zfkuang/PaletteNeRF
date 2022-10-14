@@ -17,6 +17,7 @@ import cv2
 import matplotlib.pyplot as plt
 from PIL import Image
 from sklearn.cluster import KMeans
+from skimage import io, color
 
 import torch
 import torch.nn as nn
@@ -160,26 +161,35 @@ def palette_extraction(
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
-        error_thres=5.0/255.0,
+        error_thres=2.0/255.0,
         target_size=palette_size)
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
     if use_normalize:
-        palette_rgb = palette_rgb[np.argsort(np.linalg.norm(palette_rgb, axis=-1))]
-        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # palette_rgb = palette_rgb[np.argsort(np.linalg.norm(palette_rgb, axis=-1))]
         # palette_rgb /= 5
 
+        palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True) + 1e-6
+        # hist_rgb = hist_rgb + 0.1-hist_rgb.max(dim=-1, keepdim=True)[0].clip(max=0.1)
+        hist_rgb = hist_rgb / np.linalg.norm(hist_rgb, axis=-1, keepdims=True).clip(1)
+        # hist_rgb_norm = hist_rgb_norm.reshape([32, 32, 32, 1]).clip(max=1)
+        # # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
+
         # hist_rgb = hist_rgb+0.05
-        # hist_rgb_norm = hist_rgb.sum(axis=-1, keepdims=True)
+        # # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True)
+        # hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
         # hist_rgb = hist_rgb / hist_rgb_norm
-        hist_rgb_norm = np.maximum(0.2, np.linalg.norm(hist_rgb, axis=-1, keepdims=True))
-        hist_rgb = hist_rgb / hist_rgb_norm
+        # hist_rgb_norm = np.maximum(0.2, np.linalg.norm(hist_rgb, axis=-1, keepdims=True))
+        # hist_rgb = hist_rgb / hist_rgb_norm
 
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette
     hist_weights = hist_weights.reshape([32,32,32,palette_rgb.shape[0]])
-    if use_normalize:
-        hist_weights = hist_weights * hist_rgb_norm.reshape([32, 32, 32, 1])
-    ## Generate weight
+    # if use_normalize:
+    #     palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+    #     hist_weights = hist_weights * hist_rgb_norm
+
+    # Generate weight
 
     ## save palette
     palette_img = get_bigger_palette_to_show(palette_rgb)
@@ -391,7 +401,8 @@ class PaletteTrainer(object):
         rays_d = data['rays_d'] # [B, N, 3]
 
         images = data['images'] # [B, N, 3/4]
-        gt_clip_feat = data['feat_images']
+        if self.opt.pred_clip:
+            gt_clip_feat = data['feat_images']
 
         B, N, C = images.shape
 
@@ -469,7 +480,8 @@ class PaletteTrainer(object):
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
         loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
         loss_dict['loss_direct'] = loss_direct
-        loss_dict['loss_clip_feat'] = loss_clip_feat
+        if self.opt.pred_clip:
+            loss_dict['loss_clip_feat'] = loss_clip_feat
 
         # special case for CCNeRF's rank-residual training
         if len(loss.shape) == 3: # [K, B, N]
@@ -1021,24 +1033,43 @@ class PaletteTrainer(object):
                     
                 preds = data['images'][...,:3].reshape(-1, 3)
                 
-                def test_img(img):
-                    img = img.reshape([800, 800, 3]).detach().cpu().numpy()
+                def test_img(img_name, img, H, W):
+                    img = img.reshape([H, W, 3]).detach().cpu().numpy()
                     img = (img.clip(0,1)*255).astype(np.uint8)
-                    cv2.imwrite("test.png", img[...,[2,1,0]])
+                    cv2.imwrite(img_name, img[...,[2,1,0]])
 
                 if self.opt.color_space == 'linear':
                     preds = srgb_to_linear(preds)
+                # preds_norm = preds*5 
+                # preds_norm = preds_norm / torch.clip(preds_norm.norm(dim=-1, keepdim=True), min=1)
+                # preds_norm = preds.clone().cpu().numpy()
+                # preds_norm = color.rgb2lab(preds_norm)
+                preds_norm = preds + 0.1-preds.max(dim=-1, keepdim=True)[0].clip(max=0.1)
+                # # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
+                preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
+                # preds_norm[...,0] = 70
+                # preds_norm = torch.from_numpy(color.lab2rgb(preds_norm)).type_as(preds)
+                # preds_norm = preds_norm / preds_norm.max(dim=-1, keepdim=True)[0] * 0.7
+                # preds_norm = preds.clone()
+                # preds_norm = rgb_to_hsv(preds_norm)
+                # preds_norm[...,1] = preds_norm[...,1] * 
+                # preds_norm[...,2] = 70
+                # preds_norm = hsv_to_rgb(preds_norm)
 
-                preds_norm = preds*5 
-                preds_norm = preds_norm / torch.clip(preds_norm.norm(dim=-1, keepdim=True), min=1)
-                # preds_norm = preds+0.02
-                # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
-                # preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
+                # preds = linear_to_srgb(preds)
+                # preds_norm = linear_to_srgb(preds_norm)
+
+
                 preds_depth = outputs['preds_depth'][0]
                 preds_xyz = outputs['preds_xyz'][0]
                 preds_weight = outputs['preds_weight']
                 if preds_weight.shape[0] == 1:
                     preds_weight = preds_weight[0]
+                                
+                if i == 0:
+                    test_img("test_norm.png", preds_norm, data['images'].shape[1], data['images'].shape[2])
+                    test_img("test.png", preds, data['images'].shape[1], data['images'].shape[2])
+                    
                 valid = (preds_weight>5e-1)
                 preds = preds[valid]
                 preds_norm = preds_norm[valid]
@@ -1049,6 +1080,8 @@ class PaletteTrainer(object):
                 all_preds_depth.append(preds_depth)
                 all_preds_norm.append(preds_norm)
                 pbar.update(loader.batch_size)
+
+
             # colors = torch.cat(all_preds, dim=0).detach().cpu().numpy()
             # xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             # input_dict = {"colors":colors, "xyzs":xyzs}

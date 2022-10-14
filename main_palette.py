@@ -69,6 +69,7 @@ if __name__ == '__main__':
 
     # Adobe Hybrid options   
     parser.add_argument('--use_normalized_palette', action='store_true', help="use_normalized palette")
+    parser.add_argument('--use_cosine_distance', action='store_true', help="use cosine distance")
     parser.add_argument('--continue_training', action='store_true', help="continue training")
     parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
@@ -188,7 +189,7 @@ if __name__ == '__main__':
 
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
-            use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
+            use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=1)
 
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
         # palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)

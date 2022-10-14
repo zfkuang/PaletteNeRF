@@ -110,6 +110,7 @@ class NeRFDataset:
         self.training = self.type in ['train', 'all', 'trainval']
         self.num_rays = self.opt.num_rays if self.training else -1
 
+        self.feat_images = None
         self.rand_pose = opt.rand_pose
 
         # auto-detect transforms.json and split mode.

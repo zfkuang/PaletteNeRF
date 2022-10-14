@@ -529,7 +529,10 @@ class PaletteRenderer(nn.Module):
             omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
             direct_rgb = diffuse+dir_color
             basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
-            delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+            if self.opt.use_cosine_distance:
+                delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+            else:
+                delta_rgb_norm = ((final_color-basis_color)**2).sum(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             dir_rgb_norm = dir_color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
 
             # _, _, direct_rgb_map = raymarching.composite_rays_train(sigmas, direct_rgb, deltas, rays, T_thresh)
@@ -547,7 +550,10 @@ class PaletteRenderer(nn.Module):
                 omega_diff = omega_diff.reshape(M, self.num_basis, 1)
                 diffuse_diff = diffuse_diff.reshape(M, 3)
                 
-                rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
+                if self.opt.use_cosine_distance:
+                    rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
+                else:
+                    rgb_weight = ((diffuse-diffuse_diff)**2).sum(dim=-1, keepdim=True) / 1 # (N_rays, N_samples_, 1)s
                 smooth_weight = (xyzs_weight + rgb_weight).detach()
                 smooth_weight = torch.exp(-smooth_weight)
                 smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
@@ -620,8 +626,7 @@ class PaletteRenderer(nn.Module):
             direct_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
             basis_rgb_map = torch.zeros(N, 3*self.opt.num_basis, dtype=dtype, device=device)
             basis_acc_map = torch.zeros(N, self.opt.num_basis, dtype=dtype, device=device)
-            if self.opt.pred_clip:
-                clip_feat_map = torch.zeros(N, self.opt.clip_dim, dtype=dtype, device=device)
+            clip_feat_map = torch.zeros(N, self.opt.clip_dim, dtype=dtype, device=device)
 
             n_alive = N
             rays_alive = torch.arange(n_alive, dtype=torch.int32, device=device) # [N]

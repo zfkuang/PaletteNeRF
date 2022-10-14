@@ -291,7 +291,6 @@ class PaletteNetwork(PaletteRenderer):
             {'params': self.encoder_palette.parameters(), 'lr': lr},
             {'params': self.encoder_clip.parameters(), 'lr': lr},
             {'params': self.sigma_net.parameters(), 'lr': lr},
-            {'params': self.clip_net.parameters(), 'lr': lr}, 
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
             {'params': self.diff_net.parameters(), 'lr': lr}, 
@@ -306,4 +305,7 @@ class PaletteNetwork(PaletteRenderer):
             params.append({'params': self.encoder_bg.parameters(), 'lr': lr})
             params.append({'params': self.bg_net.parameters(), 'lr': lr})
         
+        if self.opt.pred_clip:
+            params.append({'params': self.clip_net.parameters(), 'lr': lr})
+            
         return params

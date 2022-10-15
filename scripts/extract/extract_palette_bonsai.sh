@@ -1,6 +1,6 @@
 #! /bin/bash
 
-OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
+OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=5 python main_palette.py \
 ../data/mip360/bonsai \
 ./results/nerf_bonsai/version_1/checkpoints/ngp_ep0589.pth \
 -O \

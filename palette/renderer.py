@@ -11,7 +11,10 @@ from nerf.utils import custom_meshgrid
 from .utils import normalize, rgb_to_hsv, hsv_to_rgb
 from nerf.utils import srgb_to_linear
 
-def cos_distance(x, y):
+def cos_distance(x, y, zero_protect=True):
+    if zero_protect:
+        x = x + 0.1-x.max(dim=-1, keepdim=True)[0].clip(max=0.1)
+        y = y + 0.1-y.max(dim=-1, keepdim=True)[0].clip(max=0.1)
     return 1-(normalize(x) * normalize(y)).sum(dim=-1)
 
 def isclose(x, val, threshold = 1e-6):
@@ -228,239 +231,239 @@ class PaletteRenderer(nn.Module):
         self.mean_count = 0
         self.local_step = 0
 
-    def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, test_mode=False, **kwargs):
-        # rays_o, rays_d: [B, N, 3], assumes B == 1
-        # bg_color: [3] in range [0, 1]
-        # return: image: [B, N, 3], depth: [B, N]
+    # def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, test_mode=False, **kwargs):
+    #     # rays_o, rays_d: [B, N, 3], assumes B == 1
+    #     # bg_color: [3] in range [0, 1]
+    #     # return: image: [B, N, 3], depth: [B, N]
 
-        import time
-        st_time = time.perf_counter()        
-        # torch.cuda.synchronize()
-        # print("timer 1: %.04f"%(time.perf_counter()-st_time))
+    #     import time
+    #     st_time = time.perf_counter()        
+    #     # torch.cuda.synchronize()
+    #     # print("timer 1: %.04f"%(time.perf_counter()-st_time))
 
-        prefix = rays_o.shape[:-1]
-        rays_o = rays_o.contiguous().view(-1, 3)
-        rays_d = rays_d.contiguous().view(-1, 3)
+    #     prefix = rays_o.shape[:-1]
+    #     rays_o = rays_o.contiguous().view(-1, 3)
+    #     rays_d = rays_d.contiguous().view(-1, 3)
 
-        N = rays_o.shape[0] # N = B * N, in fact
-        device = rays_o.device
+    #     N = rays_o.shape[0] # N = B * N, in fact
+    #     device = rays_o.device
 
-        # choose aabb
-        aabb = self.aabb_train if self.training else self.aabb_infer
+    #     # choose aabb
+    #     aabb = self.aabb_train if self.training else self.aabb_infer
 
-        # sample steps
-        nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, aabb, self.min_near)
-        nears.unsqueeze_(-1)
-        fars.unsqueeze_(-1)
+    #     # sample steps
+    #     nears, fars = raymarching.near_far_from_aabb(rays_o, rays_d, aabb, self.min_near)
+    #     nears.unsqueeze_(-1)
+    #     fars.unsqueeze_(-1)
         
-        # torch.cuda.synchronize()
-        # print("timer 2: %.04f"%(time.perf_counter()-st_time))
-        #print(f'nears = {nears.min().item()} ~ {nears.max().item()}, fars = {fars.min().item()} ~ {fars.max().item()}')
+    #     # torch.cuda.synchronize()
+    #     # print("timer 2: %.04f"%(time.perf_counter()-st_time))
+    #     #print(f'nears = {nears.min().item()} ~ {nears.max().item()}, fars = {fars.min().item()} ~ {fars.max().item()}')
 
-        z_vals = torch.linspace(0.0, 1.0, num_steps, device=device).unsqueeze(0) # [1, T]
-        z_vals = z_vals.expand((N, num_steps)) # [N, T]
-        z_vals = nears + (fars - nears) * z_vals # [N, T], in [nears, fars]
+    #     z_vals = torch.linspace(0.0, 1.0, num_steps, device=device).unsqueeze(0) # [1, T]
+    #     z_vals = z_vals.expand((N, num_steps)) # [N, T]
+    #     z_vals = nears + (fars - nears) * z_vals # [N, T], in [nears, fars]
 
-        # perturb z_vals
-        sample_dist = (fars - nears) / num_steps
-        if perturb:
-            z_vals = z_vals + (torch.rand(z_vals.shape, device=device) - 0.5) * sample_dist
-            #z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
+    #     # perturb z_vals
+    #     sample_dist = (fars - nears) / num_steps
+    #     if perturb:
+    #         z_vals = z_vals + (torch.rand(z_vals.shape, device=device) - 0.5) * sample_dist
+    #         #z_vals = z_vals.clamp(nears, fars) # avoid out of bounds xyzs.
 
-        # generate xyzs
-        xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
-        xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+    #     # generate xyzs
+    #     xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * z_vals.unsqueeze(-1) # [N, 1, 3] * [N, T, 1] -> [N, T, 3]
+    #     xyzs = torch.min(torch.max(xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
-        #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
+    #     #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
 
-        # query SDF and RGB
-        # torch.cuda.synchronize()
-        # print("timer 2.5: %.04f"%(time.perf_counter()-st_time))
-        density_outputs = self.density(xyzs.reshape(-1, 3))
+    #     # query SDF and RGB
+    #     # torch.cuda.synchronize()
+    #     # print("timer 2.5: %.04f"%(time.perf_counter()-st_time))
+    #     density_outputs = self.density(xyzs.reshape(-1, 3))
 
-        #sigmas = density_outputs['sigma'].view(N, num_steps) # [N, T]
-        for k, v in density_outputs.items():
-            density_outputs[k] = v.view(N, num_steps, -1)
+    #     #sigmas = density_outputs['sigma'].view(N, num_steps) # [N, T]
+    #     for k, v in density_outputs.items():
+    #         density_outputs[k] = v.view(N, num_steps, -1)
         
-        # torch.cuda.synchronize()
-        # print("timer 3: %.04f"%(time.perf_counter()-st_time))
+    #     # torch.cuda.synchronize()
+    #     # print("timer 3: %.04f"%(time.perf_counter()-st_time))
 
-        # upsample z_vals (nerf-like)
-        if upsample_steps > 0:
-            with torch.no_grad():
+    #     # upsample z_vals (nerf-like)
+    #     if upsample_steps > 0:
+    #         with torch.no_grad():
 
-                deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T-1]
-                deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
+    #             deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T-1]
+    #             deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
 
-                alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T]
-                alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+1]
-                weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T]
+    #             alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T]
+    #             alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+1]
+    #             weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T]
 
-                # sample new z_vals
-                z_vals_mid = (z_vals[..., :-1] + 0.5 * deltas[..., :-1]) # [N, T-1]
-                new_z_vals = sample_pdf(z_vals_mid, weights[:, 1:-1], upsample_steps, det=not self.training).detach() # [N, t]
+    #             # sample new z_vals
+    #             z_vals_mid = (z_vals[..., :-1] + 0.5 * deltas[..., :-1]) # [N, T-1]
+    #             new_z_vals = sample_pdf(z_vals_mid, weights[:, 1:-1], upsample_steps, det=not self.training).detach() # [N, t]
 
-                new_xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * new_z_vals.unsqueeze(-1) # [N, 1, 3] * [N, t, 1] -> [N, t, 3]
-                new_xyzs = torch.min(torch.max(new_xyzs, aabb[:3]), aabb[3:]) # a manual clip.
+    #             new_xyzs = rays_o.unsqueeze(-2) + rays_d.unsqueeze(-2) * new_z_vals.unsqueeze(-1) # [N, 1, 3] * [N, t, 1] -> [N, t, 3]
+    #             new_xyzs = torch.min(torch.max(new_xyzs, aabb[:3]), aabb[3:]) # a manual clip.
 
-            # only forward new points to save computation
-            new_density_outputs = self.density(new_xyzs.reshape(-1, 3))
-            #new_sigmas = new_density_outputs['sigma'].view(N, upsample_steps) # [N, t]
-            for k, v in new_density_outputs.items():
-                new_density_outputs[k] = v.view(N, upsample_steps, -1)
+    #         # only forward new points to save computation
+    #         new_density_outputs = self.density(new_xyzs.reshape(-1, 3))
+    #         #new_sigmas = new_density_outputs['sigma'].view(N, upsample_steps) # [N, t]
+    #         for k, v in new_density_outputs.items():
+    #             new_density_outputs[k] = v.view(N, upsample_steps, -1)
 
-            # re-order
-            z_vals = torch.cat([z_vals, new_z_vals], dim=1) # [N, T+t]
-            z_vals, z_index = torch.sort(z_vals, dim=1)
+    #         # re-order
+    #         z_vals = torch.cat([z_vals, new_z_vals], dim=1) # [N, T+t]
+    #         z_vals, z_index = torch.sort(z_vals, dim=1)
 
-            xyzs = torch.cat([xyzs, new_xyzs], dim=1) # [N, T+t, 3]
-            xyzs = torch.gather(xyzs, dim=1, index=z_index.unsqueeze(-1).expand_as(xyzs))
+    #         xyzs = torch.cat([xyzs, new_xyzs], dim=1) # [N, T+t, 3]
+    #         xyzs = torch.gather(xyzs, dim=1, index=z_index.unsqueeze(-1).expand_as(xyzs))
 
-            for k in density_outputs:
-                tmp_output = torch.cat([density_outputs[k], new_density_outputs[k]], dim=1)
-                density_outputs[k] = torch.gather(tmp_output, dim=1, index=z_index.unsqueeze(-1).expand_as(tmp_output))
+    #         for k in density_outputs:
+    #             tmp_output = torch.cat([density_outputs[k], new_density_outputs[k]], dim=1)
+    #             density_outputs[k] = torch.gather(tmp_output, dim=1, index=z_index.unsqueeze(-1).expand_as(tmp_output))
 
-        # torch.cuda.synchronize()
-        # print("timer 4: %.04f"%(time.perf_counter()-st_time))
+    #     # torch.cuda.synchronize()
+    #     # print("timer 4: %.04f"%(time.perf_counter()-st_time))
 
-        deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T+t-1]
-        deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
-        alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T+t]
-        alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+t+1]
-        weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T+t]
+    #     deltas = z_vals[..., 1:] - z_vals[..., :-1] # [N, T+t-1]
+    #     deltas = torch.cat([deltas, sample_dist * torch.ones_like(deltas[..., :1])], dim=-1)
+    #     alphas = 1 - torch.exp(-deltas * self.density_scale * density_outputs['sigma'].squeeze(-1)) # [N, T+t]
+    #     alphas_shifted = torch.cat([torch.ones_like(alphas[..., :1]), 1 - alphas + 1e-15], dim=-1) # [N, T+t+1]
+    #     weights = alphas * torch.cumprod(alphas_shifted, dim=-1)[..., :-1] # [N, T+t]
 
-        # detach density output from original nerf
-        weights = weights.detach()
+    #     # detach density output from original nerf
+    #     weights = weights.detach()
 
-        dirs = rays_d.view(-1, 1, 3).expand_as(xyzs)
-        for k, v in density_outputs.items():
-            density_outputs[k] = v.view(-1, v.shape[-1]).detach()
-        # torch.cuda.synchronize()
-        # print("timer 5: %.04f"%(time.perf_counter()-st_time))
+    #     dirs = rays_d.view(-1, 1, 3).expand_as(xyzs)
+    #     for k, v in density_outputs.items():
+    #         density_outputs[k] = v.view(-1, v.shape[-1]).detach()
+    #     # torch.cuda.synchronize()
+    #     # print("timer 5: %.04f"%(time.perf_counter()-st_time))
 
-        mask = weights > 1e-4 # hard coded
-        d_color, omega, color, diffuse = self.color(xyzs.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
-        d_color = d_color.reshape(N, -1, self.num_basis, 3)
-        omega = omega.reshape(N, -1, self.num_basis, 1)
-        color = color.reshape(N, -1, 3)
-        diffuse = diffuse.reshape(N, -1, 3)
+    #     mask = weights > 1e-4 # hard coded
+    #     d_color, omega, color, diffuse = self.color(xyzs.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
+    #     d_color = d_color.reshape(N, -1, self.num_basis, 3)
+    #     omega = omega.reshape(N, -1, self.num_basis, 1)
+    #     color = color.reshape(N, -1, 3)
+    #     diffuse = diffuse.reshape(N, -1, 3)
 
-        if self.require_smooth_loss and not test_mode:
-            xyzs_diff = (xyzs + torch.rand_like(xyzs)*0.05).clamp(-self.bound, self.bound)
-            xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
-            d_color_diff, omega_diff, _, diffuse_diff = self.color(xyzs_diff.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
-            d_color_diff = d_color_diff.reshape(N, -1, self.num_basis, 3)
-            omega_diff = omega_diff.reshape(N, -1, self.num_basis, 1)
-            diffuse_diff = diffuse_diff.reshape(N, -1, 3)
+    #     if self.require_smooth_loss and not test_mode:
+    #         xyzs_diff = (xyzs + torch.rand_like(xyzs)*0.05).clamp(-self.bound, self.bound)
+    #         xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
+    #         d_color_diff, omega_diff, _, diffuse_diff = self.color(xyzs_diff.reshape(-1, 3), dirs.reshape(-1, 3), mask=mask.reshape(-1), **density_outputs)
+    #         d_color_diff = d_color_diff.reshape(N, -1, self.num_basis, 3)
+    #         omega_diff = omega_diff.reshape(N, -1, self.num_basis, 1)
+    #         diffuse_diff = diffuse_diff.reshape(N, -1, 3)
             
-            rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
-            smooth_weight = (xyzs_weight + rgb_weight).detach()
-            smooth_weight = torch.exp(-smooth_weight)
-            smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
-            smooth_norm_map = (weights[:,:,None]*smooth_norm).sum(dim=1) # N_rays, 1
-            smooth_norm_map = smooth_norm_map.view(*prefix)
-        else:
-            smooth_norm_map = None
+    #         rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
+    #         smooth_weight = (xyzs_weight + rgb_weight).detach()
+    #         smooth_weight = torch.exp(-smooth_weight)
+    #         smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight
+    #         smooth_norm_map = (weights[:,:,None]*smooth_norm).sum(dim=1) # N_rays, 1
+    #         smooth_norm_map = smooth_norm_map.view(*prefix)
+    #     else:
+    #         smooth_norm_map = None
 
-        # torch.cuda.synchronize()
-        # print("timer 6: %.04f"%(time.perf_counter()-st_time))
+    #     # torch.cuda.synchronize()
+    #     # print("timer 6: %.04f"%(time.perf_counter()-st_time))
 
-        basis_color = self.basis_color[None,None,:,:].clamp(0, 1)
-        #basis_color = normalize(basis_color)
-        # basis_color = utils.lab_to_rgb(torch.concatenate([self.basis_color[...,:1]*0+75, 
-        #                                                     self.basis_color[...,1:]], dim=-1))
-        # basis_color = basis_color[None,None,:,:]
+    #     basis_color = self.basis_color[None,None,:,:].clamp(0, 1)
+    #     #basis_color = normalize(basis_color)
+    #     # basis_color = utils.lab_to_rgb(torch.concatenate([self.basis_color[...,:1]*0+75, 
+    #     #                                                     self.basis_color[...,1:]], dim=-1))
+    #     # basis_color = basis_color[None,None,:,:]
 
-        if self.freeze_basis_color:
-            basis_color = basis_color.detach()
+    #     if self.freeze_basis_color:
+    #         basis_color = basis_color.detach()
 
-        if self.opt.multiply_delta:
-            final_color = (basis_color*d_color).clamp(0, 1)
-        else:
-            final_color = (basis_color+d_color).clamp(0, 1)
-        basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
+    #     if self.opt.multiply_delta:
+    #         final_color = (basis_color*d_color).clamp(0, 1)
+    #     else:
+    #         final_color = (basis_color+d_color).clamp(0, 1)
+    #     basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
 
-        rgb = basis_rgb.sum(dim=-2) + color # (N_rays, N_samples_, 3)
-        rgb_map = (weights[:,:,None]*rgb).sum(dim=1) # N_rays, 3
+    #     rgb = basis_rgb.sum(dim=-2) + color # (N_rays, N_samples_, 3)
+    #     rgb_map = (weights[:,:,None]*rgb).sum(dim=1) # N_rays, 3
 
-        # calculate weight_sum (mask)
-        weights_sum = weights.sum(dim=-1) # [N]
+    #     # calculate weight_sum (mask)
+    #     weights_sum = weights.sum(dim=-1) # [N]
 
-        # calculate depth 
-        ori_z_vals = ((z_vals - nears) / (fars - nears)).clamp(0, 1)
-        depth = torch.sum(weights * ori_z_vals, dim=-1)
+    #     # calculate depth 
+    #     ori_z_vals = ((z_vals - nears) / (fars - nears)).clamp(0, 1)
+    #     depth = torch.sum(weights * ori_z_vals, dim=-1)
     
-        # mix background color
-        if self.bg_radius > 0:
-            # use the bg model to calculate bg_color
-            sph = raymarching.sph_from_ray(rays_o, rays_d, self.bg_radius) # [N, 2] in [-1, 1]
-            bg_color = self.background(sph, rays_d.reshape(-1, 3)) # [N, 3]
-        elif bg_color is None:
-            bg_color = 1
+    #     # mix background color
+    #     if self.bg_radius > 0:
+    #         # use the bg model to calculate bg_color
+    #         sph = raymarching.sph_from_ray(rays_o, rays_d, self.bg_radius) # [N, 2] in [-1, 1]
+    #         bg_color = self.background(sph, rays_d.reshape(-1, 3)) # [N, 3]
+    #     elif bg_color is None:
+    #         bg_color = 1
             
-        rgb_map = rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
+    #     rgb_map = rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
 
-        rgb_map = rgb_map.view(*prefix, 3)
-        depth = depth.view(*prefix)
+    #     rgb_map = rgb_map.view(*prefix, 3)
+    #     depth = depth.view(*prefix)
 
-        # torch.cuda.synchronize()
-        # print("timer 7: %.04f"%(time.perf_counter()-st_time))
+    #     # torch.cuda.synchronize()
+    #     # print("timer 7: %.04f"%(time.perf_counter()-st_time))
 
-        if not gui_mode: 
-            # print("timer ???: %.04f"%(time.perf_counter()-st_time))
-            omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
-            omega_norm_map = (weights[:,:,None].detach()*omega_norm).sum(dim=1) # N_rays, 1
-            omega_norm_map = omega_norm_map.view(*prefix, 1)
+    #     if not gui_mode: 
+    #         # print("timer ???: %.04f"%(time.perf_counter()-st_time))
+    #         omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
+    #         omega_norm_map = (weights[:,:,None].detach()*omega_norm).sum(dim=1) # N_rays, 1
+    #         omega_norm_map = omega_norm_map.view(*prefix, 1)
 
 
-            direct_rgb = diffuse+color
-            direct_rgb_map = (weights[:,:,None]*direct_rgb).sum(dim=1) # N_rays, 3
-            # if self.opt.color_space != "linear":
-            #     rgb_map = safe_pow(rgb_map, 1/2.4) # linear 
+    #         direct_rgb = diffuse+color
+    #         direct_rgb_map = (weights[:,:,None]*direct_rgb).sum(dim=1) # N_rays, 3
+    #         # if self.opt.color_space != "linear":
+    #         #     rgb_map = safe_pow(rgb_map, 1/2.4) # linear 
             
-            basis_rgb = basis_rgb.reshape(N, basis_rgb.shape[1], -1) # (N_rays, N_samples_, N_basis*3)
-            basis_rgb_map = (weights[:,:,None]*basis_rgb).sum(dim=1) # N_rays, N_basis*3
-            basis_acc_map = (weights[:,:,None].detach()*omega[...,0]).sum(dim=1)
+    #         basis_rgb = basis_rgb.reshape(N, basis_rgb.shape[1], -1) # (N_rays, N_samples_, N_basis*3)
+    #         basis_rgb_map = (weights[:,:,None]*basis_rgb).sum(dim=1) # N_rays, N_basis*3
+    #         basis_acc_map = (weights[:,:,None].detach()*omega[...,0]).sum(dim=1)
 
-            # delta_rgb_norm = d_color.norm(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-            delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-            delta_rgb_norm_map = (weights[:,:,None]*delta_rgb_norm).sum(dim=1) # N_rays, 1
+    #         # delta_rgb_norm = d_color.norm(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+    #         delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+    #         delta_rgb_norm_map = (weights[:,:,None]*delta_rgb_norm).sum(dim=1) # N_rays, 1
             
-            dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3
-            dir_rgb_norm = color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-            dir_rgb_norm_map = (weights[:,:,None]*dir_rgb_norm).sum(dim=1) # N_rays, 1
+    #         dir_rgb_map = (weights[:,:,None]*color).sum(dim=1) # N_rays, 3
+    #         dir_rgb_norm = color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+    #         dir_rgb_norm_map = (weights[:,:,None]*dir_rgb_norm).sum(dim=1) # N_rays, 1
 
 
-            direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
+    #         direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
 
-            basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
-            basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
-            omega_norm_map = omega_norm_map.view(*prefix)
-            dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
-            delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
-            dir_rgb_map = dir_rgb_map.view(*prefix, 3)
-            direct_rgb_map = direct_rgb_map.view(*prefix, 3)
-            basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
+    #         basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
+    #         basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
+    #         omega_norm_map = omega_norm_map.view(*prefix)
+    #         dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
+    #         delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
+    #         dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+    #         direct_rgb_map = direct_rgb_map.view(*prefix, 3)
+    #         basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
 
-            return {
-                'depth': depth,
-                'image': rgb_map,
-                'smooth_norm': smooth_norm_map,
-                'omega_norm': omega_norm_map,
-                'dir_norm': dir_rgb_norm_map,
-                'delta_norm': delta_rgb_norm_map,
-                'dir_rgb': dir_rgb_map,
-                'direct_rgb': direct_rgb_map,
-                'basis_rgb': basis_rgb_map,
-                'basis_acc': basis_acc_map,
-                'weights_sum': weights_sum,
-            }
-        else:
-            return {
-                'depth': depth,
-                'image': rgb_map,
-                'weights_sum': weights_sum,
-            }
+    #         return {
+    #             'depth': depth,
+    #             'image': rgb_map,
+    #             'smooth_norm': smooth_norm_map,
+    #             'omega_norm': omega_norm_map,
+    #             'dir_norm': dir_rgb_norm_map,
+    #             'delta_norm': delta_rgb_norm_map,
+    #             'dir_rgb': dir_rgb_map,
+    #             'direct_rgb': direct_rgb_map,
+    #             'basis_rgb': basis_rgb_map,
+    #             'basis_acc': basis_acc_map,
+    #             'weights_sum': weights_sum,
+    #         }
+    #     else:
+            # return {
+            #     'depth': depth,
+            #     'image': rgb_map,
+            #     'weights_sum': weights_sum,
+            # }
 
 
     def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
@@ -530,7 +533,7 @@ class PaletteRenderer(nn.Module):
             direct_rgb = diffuse+dir_color
             basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
             if self.opt.use_cosine_distance:
-                delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+                delta_rgb_norm = cos_distance(final_color, basis_color, zero_protect=False).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             else:
                 delta_rgb_norm = ((final_color-basis_color)**2).sum(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             dir_rgb_norm = dir_color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
@@ -543,7 +546,7 @@ class PaletteRenderer(nn.Module):
             # omega_norm_map, delta_rgb_norm_map, dir_rgb_norm_map = norm_rgb_map.permute(1, 0)
 
             if self.require_smooth_loss:
-                xyzs_diff = (xyzs + torch.rand_like(xyzs)*0.05).clamp(-self.bound, self.bound)
+                xyzs_diff = (xyzs + torch.rand_like(xyzs) * self.bound * 0.03).clamp(-self.bound, self.bound)
                 xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
                 _, _, d_color_diff, omega_diff, _, diffuse_diff =  self(xyzs_diff, dirs)
                 d_color_diff = d_color_diff.reshape(M, self.num_basis, 3)
@@ -551,9 +554,9 @@ class PaletteRenderer(nn.Module):
                 diffuse_diff = diffuse_diff.reshape(M, 3)
                 
                 if self.opt.use_cosine_distance:
-                    rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / 1
+                    rgb_weight = cos_distance(diffuse, diffuse_diff)[...,None] / 1
                 else:
-                    rgb_weight = ((diffuse-diffuse_diff)**2).sum(dim=-1, keepdim=True) / 1 # (N_rays, N_samples_, 1)s
+                    rgb_weight = ((diffuse-diffuse_diff)**2).sum(dim=-1, keepdim=True) / 1 # (N_rays, N_samples_, 1)
                 smooth_weight = (xyzs_weight + rgb_weight).detach()
                 smooth_weight = torch.exp(-smooth_weight)
                 smooth_norm = (omega_diff-omega)[...,0].norm(dim=-1, keepdim=True) * smooth_weight

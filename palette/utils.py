@@ -161,26 +161,24 @@ def palette_extraction(
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
-        error_thres=2.0/255.0,
+        error_thres=5.0/255.0,
         target_size=palette_size)
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
     if use_normalize:
         # palette_rgb = palette_rgb[np.argsort(np.linalg.norm(palette_rgb, axis=-1))]
         # palette_rgb /= 5
 
-        palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
         # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True) + 1e-6
         # hist_rgb = hist_rgb + 0.1-hist_rgb.max(dim=-1, keepdim=True)[0].clip(max=0.1)
-        hist_rgb = hist_rgb / np.linalg.norm(hist_rgb, axis=-1, keepdims=True).clip(1)
+        # hist_rgb = hist_rgb / np.linalg.norm(hist_rgb, axis=-1, keepdims=True).clip(1)
         # hist_rgb_norm = hist_rgb_norm.reshape([32, 32, 32, 1]).clip(max=1)
         # # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
 
-        # hist_rgb = hist_rgb+0.05
-        # # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True)
-        # hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
-        # hist_rgb = hist_rgb / hist_rgb_norm
+        hist_rgb = hist_rgb + 0.1-hist_rgb.max(axis=-1, keepdims=True).clip(max=0.1)
+        hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
+        hist_rgb = hist_rgb / hist_rgb_norm
         # hist_rgb_norm = np.maximum(0.2, np.linalg.norm(hist_rgb, axis=-1, keepdims=True))
-        # hist_rgb = hist_rgb / hist_rgb_norm
 
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette

@@ -73,7 +73,7 @@ if __name__ == '__main__':
     parser.add_argument('--continue_training', action='store_true', help="continue training")
     parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
-    parser.add_argument("--lambda_smooth", type=float, default=0.001, help='weight of smooth loss')
+    parser.add_argument("--lambda_smooth", type=float, default=2e-4, help='weight of smooth loss')
     parser.add_argument("--lambda_dir", type=float, default=0.02, help='weight of dir loss')
     parser.add_argument("--lambda_delta", type=float, default=0.1, help='weight of delta color loss')
     parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')

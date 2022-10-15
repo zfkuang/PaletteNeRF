@@ -530,7 +530,8 @@ class PaletteRenderer(nn.Module):
             direct_rgb = diffuse+dir_color
             basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
             if self.opt.use_cosine_distance:
-                delta_rgb_norm = cos_distance(final_color, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+                final_color_clip = final_color_clip + 0.1-final_color_clip.max(dim=-1, keepdim=True)[0].clip(max=0.1).detach()
+                delta_rgb_norm = cos_distance(final_color_clip, basis_color).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             else:
                 delta_rgb_norm = ((final_color-basis_color)**2).sum(dim=-1).mean(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             dir_rgb_norm = dir_color.norm(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)

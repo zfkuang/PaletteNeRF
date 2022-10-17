@@ -165,30 +165,34 @@ def palette_extraction(
         target_size=palette_size)
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
     if use_normalize:
+        # import pdb
+        # pdb.set_trace()
         # palette_rgb = palette_rgb[np.argsort(np.linalg.norm(palette_rgb, axis=-1))]
         # palette_rgb /= 5
 
-        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
         # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True) + 1e-6
-        hist_rgb = hist_rgb + 0.1-hist_rgb.max(dim=-1, keepdim=True)[0].clip(max=0.1)
-        hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
-        hist_rgb = hist_rgb / hist_rgb_norm
+        # hist_rgb = hist_rgb + 0.1-hist_rgb.max(dim=-1, keepdim=True)[0].clip(max=0.1)
+        # hist_rgb = hist_rgb / np.linalg.norm(hist_rgb, axis=-1, keepdims=True).clip(1)
         # hist_rgb_norm = hist_rgb_norm.reshape([32, 32, 32, 1]).clip(max=1)
         # # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
 
-        # hist_rgb = hist_rgb+0.05
-        # # hist_rgb_norm = hist_rgb.norm(axis=-1, keepdims=True)
-        # hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True)
-        # hist_rgb = hist_rgb / hist_rgb_norm
+        # palette_rgb /= np.linalg.norm(palette_rgb, axis=-1, keepdims=True)
+        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # hist_rgb = hist_rgb + (0.2-hist_rgb.max(axis=-1, keepdims=True).clip(max=0.2)).clip(max=0.05)
+        hist_rgb = hist_rgb + 0.05
+        hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True) #.clip(min=0.1)
+        # hist_rgb_norm = hist_rgb.max(axis=-1, keepdims=True).clip(max=0.2)
+        hist_rgb = hist_rgb / hist_rgb_norm
         # hist_rgb_norm = np.maximum(0.2, np.linalg.norm(hist_rgb, axis=-1, keepdims=True))
-        # hist_rgb = hist_rgb / hist_rgb_norm
 
     hist_weights = Tan18.Get_ASAP_weights_using_Tan_2016_triangulation_and_then_barycentric_coordinates(hist_rgb.astype(np.double).reshape((-1,1,3)), 
                         palette_rgb, None, order=0) # N_bin_center x 1 x num_palette
     hist_weights = hist_weights.reshape([32,32,32,palette_rgb.shape[0]])
+    
     # if use_normalize:
-    #     palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
-    #     hist_weights = hist_weights * hist_rgb_norm
+    #     palette_rgb /= np.linalg.norm(palette_rgb, axis=-1, keepdims=True)
+        # palette_rgb = np.concatenate([palette_rgb, palette_rgb[0:1,:]*0], axis=0)
+        # hist_weights = hist_weights * hist_rgb_norm
 
     # Generate weight
 
@@ -432,13 +436,11 @@ class PaletteTrainer(object):
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
         loss_direct = self.criterion(outputs['direct_rgb'], gt_rgb).mean() # [B, N, 3] --> [B, N]
-        loss += loss_direct
 
         # pred clip feature
         if self.opt.pred_clip:
             pred_clip_feat = outputs['clip_feat']
             loss_clip_feat = self.criterion(pred_clip_feat, gt_clip_feat).mean()
-            loss += loss_clip_feat
 
         # patch-based rendering
         if self.opt.patch_size > 1:
@@ -470,19 +472,33 @@ class PaletteTrainer(object):
         else:
             smooth_loss = 0
 
-        loss = loss + self.opt.lambda_sparsity * sparsity_loss + self.opt.lambda_delta * delta_loss + self.opt.lambda_dir * dir_loss
-        loss = loss + smooth_loss * self.opt.lambda_smooth
-        loss = loss + weights_guide_loss * self.lambda_weight
+        palette_loss = ((self.model.basis_color - self.model.basis_color_origin)**2).sum(dim=-1).mean()
 
-        loss_dict['loss_sparsity'] =  self.opt.lambda_sparsity * sparsity_loss
+        loss_dict['loss_sparsity'] = self.opt.lambda_sparsity * sparsity_loss
+        loss += loss_dict['loss_sparsity']
+
         loss_dict['loss_delta'] =  self.opt.lambda_delta * delta_loss
+        loss += loss_dict['loss_delta']
+
         loss_dict['loss_dir'] =  self.opt.lambda_dir * dir_loss
+        loss += loss_dict['loss_dir']
+
         loss_dict['loss_smooth'] =  self.opt.lambda_smooth * smooth_loss
+        loss += loss_dict['loss_smooth']
+
+        loss_dict['loss_palette'] = self.lambda_palette * palette_loss
+        loss += loss_dict['loss_palette']
+
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
         loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
+        loss += loss_dict['loss_weight']
+
         loss_dict['loss_direct'] = loss_direct
+        loss += loss_dict['loss_direct']
+
         if self.opt.pred_clip:
             loss_dict['loss_clip_feat'] = loss_clip_feat
+            loss += loss_dict['loss_clip_feat']
 
         # special case for CCNeRF's rank-residual training
         if len(loss.shape) == 3: # [K, B, N]
@@ -559,6 +575,7 @@ class PaletteTrainer(object):
         # get a ref to error_map
         self.error_map = train_loader._data.error_map
         
+        self.lambda_palette = 0
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
 
@@ -574,6 +591,7 @@ class PaletteTrainer(object):
             
             if epoch >= self.opt.max_freeze_palette_epoch or not self.opt.use_initialization_from_rgbxy:
                 self.model.freeze_basis_color = False
+                self.lambda_palette = self.opt.lambda_palette
             if epoch >= self.opt.smooth_epoch:
                 self.model.require_smooth_loss = True
 
@@ -737,6 +755,7 @@ class PaletteTrainer(object):
                     save_path_basis_img = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_img.png')
                     save_path_basis_acc = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_acc.png')
                     save_path_basis_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_color.png')
+                    save_path_unscaled_basis_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_unscaled_basis_color.png')
                     save_path_dir_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_dir_color.png')
                     save_path_clip_feat = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_clip_feat.png')
 
@@ -773,11 +792,17 @@ class PaletteTrainer(object):
                     pred_basis_img = []
                     pred_basis_acc = []
                     pred_basis_color = []
+                    pred_unscaled_basis_color = []
                     for i in range(self.opt.num_basis):
                         basis_img = outputs['basis_rgb'][0,:,i*3:(i+1)*3].reshape(pred.shape[0], pred.shape[1], 3)
-                        pred_basis_img.append(basis_img.detach().cpu().numpy())                        
+                        pred_basis_img.append(basis_img.detach().cpu().numpy())  
+
+                        unscaled_basis_img = outputs['unscaled_basis_rgb'][0,:,i*3:(i+1)*3].reshape(pred.shape[0], pred.shape[1], 3)
+                        pred_unscaled_basis_color.append(unscaled_basis_img.detach().cpu().numpy())  
+
                         basis_acc = outputs['basis_acc'][0,:,i:(i+1)].reshape(pred.shape[0], pred.shape[1])
                         pred_basis_acc.append(basis_acc.detach().cpu().numpy())
+
                         basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
                         basis_color = basis_color.clamp(0, 1)
                         # basis_color = basis_color/(basis_color.norm(dim=-1, keepdim=True)+1e-6).detach()
@@ -787,10 +812,12 @@ class PaletteTrainer(object):
                     pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
                     pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
                     pred_basis_color = (np.concatenate(pred_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
+                    pred_unscaled_basis_color = (np.concatenate(pred_unscaled_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
 
                     cv2.imwrite(save_path_basis_img, cv2.cvtColor(pred_basis_img, cv2.COLOR_RGB2BGR))
                     cv2.imwrite(save_path_basis_acc, pred_basis_acc)
                     cv2.imwrite(save_path_basis_color, cv2.cvtColor(pred_basis_color, cv2.COLOR_RGB2BGR))
+                    cv2.imwrite(save_path_unscaled_basis_color, cv2.cvtColor(pred_unscaled_basis_color, cv2.COLOR_RGB2BGR))
                     cv2.imwrite(save_path_dir_color, cv2.cvtColor(pred_dir_color, cv2.COLOR_RGB2BGR))
                     
                     cv2.imwrite(save_path, cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
@@ -1045,9 +1072,10 @@ class PaletteTrainer(object):
                 # preds_norm = preds_norm / torch.clip(preds_norm.norm(dim=-1, keepdim=True), min=1)
                 # preds_norm = preds.clone().cpu().numpy()
                 # preds_norm = color.rgb2lab(preds_norm)
-                preds_norm = preds + 0.1-preds.max(dim=-1, keepdim=True)[0].clip(max=0.1)
+                preds_norm = preds + 0.05
                 # # preds_norm = preds_norm / preds_norm.sum(dim=-1, keepdim=True)
                 preds_norm = preds_norm / preds_norm.norm(dim=-1, keepdim=True)
+                # preds_norm = preds_norm / preds_norm.max(dim=-1, keepdim=True)[0]
                 # preds_norm[...,0] = 70
                 # preds_norm = torch.from_numpy(color.lab2rgb(preds_norm)).type_as(preds)
                 # preds_norm = preds_norm / preds_norm.max(dim=-1, keepdim=True)[0] * 0.7

@@ -268,6 +268,8 @@ class NeRFDataset:
                     feat_image = torch.from_numpy(feat_image)
                     feat_image = feat_image.permute(2, 0, 1)[None,...]
                     feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
+                    if self.preload:
+                        feat_image = feat_image.to(self.device)
                     self.feat_images.append(feat_image[0].permute(1, 2, 0))
 
                 self.poses.append(pose)
@@ -313,6 +315,7 @@ class NeRFDataset:
                 self.feat_images = self.feat_images.to(dtype).to(self.device)
             if self.error_map is not None:
                 self.error_map = self.error_map.to(self.device)
+            torch.cuda.empty_cache()
 
         # load intrinsics
         if 'fl_x' in transform or 'fl_y' in transform:

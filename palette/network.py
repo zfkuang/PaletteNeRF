@@ -103,9 +103,9 @@ class PaletteNetwork(PaletteRenderer):
 
         self.basis_net = nn.ModuleList(basis_net)
         if self.opt.multiply_delta:
-            self.delta_color_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis*3), nn.ELU())
+            self.delta_color_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis*3+1), nn.ELU())
         else:
-            self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3)
+            self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3+1)
         self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis, bias=False), nn.Softplus())
 
         if opt.pred_clip:

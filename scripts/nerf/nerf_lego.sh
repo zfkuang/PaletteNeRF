@@ -6,4 +6,3 @@ OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_nerf.py \
 -O \
 --scale 0.8 \
 --dt_gamma 0 \
---gui

@@ -15,3 +15,7 @@ tensorf/
 results/
 results_palette/
 not_used/
+**dnerf*
+dnerf/
+**neus*
+neus/

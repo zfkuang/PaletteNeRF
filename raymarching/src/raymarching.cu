@@ -416,7 +416,7 @@ __global__ void kernel_march_rays_train(
     rays[ray_index * 3 + 2] = num_steps;
 
     if (num_steps == 0) return;
-    if (point_index + num_steps >= M) return;
+    if (point_index + num_steps > M) return;
 
     xyzs += point_index * 3;
     dirs += point_index * 3;
@@ -521,7 +521,7 @@ __global__ void kernel_composite_rays_train_forward(
     uint32_t num_steps = rays[n * 3 + 2];
 
     // empty ray, or ray that exceed max step count.
-    if (num_steps == 0 || offset + num_steps >= M) {
+    if (num_steps == 0 || offset + num_steps > M) {
         weights_sum[index] = 0;
         depth[index] = 0;
         image[index * 3] = 0;
@@ -700,7 +700,7 @@ __global__ void kernel_composite_rays_train_backward(
     uint32_t offset = rays[n * 3 + 1];
     uint32_t num_steps = rays[n * 3 + 2];
 
-    if (num_steps == 0 || offset + num_steps >= M) return;
+    if (num_steps == 0 || offset + num_steps > M) return;
 
     grad_weights_sum += index;
     grad_image += index * 3;
@@ -730,10 +730,7 @@ __global__ void kernel_composite_rays_train_backward(
         ws += weight;
 
         T *= 1.0f - alpha;
-
-        // minimal remained transmittence
-        if (T < T_thresh) break;
-
+        
         // check https://note.kiui.moe/others/nerf_gradient/ for the gradient calculation.
         // write grad_rgbs
         grad_rgbs[0] = grad_image[0] * weight;
@@ -749,7 +746,9 @@ __global__ void kernel_composite_rays_train_backward(
         );
 
         //printf("[n=%d] num_steps=%d, T=%f, grad_sigmas=%f, r_final=%f, r=%f\n", n, step, T, grad_sigmas[0], r_final, r);
-    
+        // minimal remained transmittence
+        if (T < T_thresh) break;
+        
         // locate
         sigmas++;
         rgbs += 3;
@@ -1137,7 +1136,7 @@ __global__ void kernel_composite_rays_flex(
         output[i] = temp[i];
 }
 
-void composite_rays(const uint32_t n_alive, const uint32_t n_step, const float T_thresh, at::Tensor rays_alive, at::Tensor rays_t, const at::Tensor sigmas, const at::Tensor rgbs, const at::Tensor deltas, at::Tensor weights, at::Tensor depth, at::Tensor image) {
+void composite_rays(const uint32_t n_alive, const uint32_t n_step, const float T_thresh, at::Tensor rays_alive, at::Tensor rays_t, at::Tensor sigmas, at::Tensor rgbs, at::Tensor deltas, at::Tensor weights, at::Tensor depth, at::Tensor image) {
     static constexpr uint32_t N_THREAD = 128;
     AT_DISPATCH_FLOATING_TYPES_AND_HALF(
     image.scalar_type(), "composite_rays", ([&] {

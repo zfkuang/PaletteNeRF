@@ -569,8 +569,8 @@ class PaletteTrainer(object):
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
 
         # mark untrained region (i.e., not covered by any camera from the training dataset)
-        if self.model.cuda_ray:
-            self.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
+        # if self.model.cuda_ray:
+        #     self.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
 
         # get a ref to error_map
         self.error_map = train_loader._data.error_map
@@ -626,9 +626,9 @@ class PaletteTrainer(object):
         for data in loader:
             
             # update grid every 16 steps
-            if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
-                with torch.cuda.amp.autocast(enabled=self.fp16):
-                    self.model.update_extra_state()
+            # if self.model.cuda_ray and self.global_step % self.opt.update_extra_interval == 0:
+            #     with torch.cuda.amp.autocast(enabled=self.fp16):
+            #         self.model.update_extra_state()
                     
             self.local_step += 1
             self.global_step += 1
@@ -1224,8 +1224,15 @@ class PaletteTrainer(object):
         self.global_step = checkpoint_dict['global_step']
         self.log(f"[INFO] load at epoch {self.epoch}, global step {self.global_step}")
 
-    def load_nerf_checkpoint(self, ckpt_path=None):
-        checkpoint_dict = torch.load(ckpt_path, map_location=self.device)
+    def load_nerf_checkpoint(self, ckpt_path):
+
+        checkpoint_list = sorted(glob.glob(f'{ckpt_path}/checkpoints/ngp_ep*.pth'))
+        assert(checkpoint_list)
+
+        checkpoint = checkpoint_list[-1]
+        self.log(f"[INFO] Latest checkpoint is {checkpoint}")
+
+        checkpoint_dict = torch.load(checkpoint, map_location=self.device)
         missing_keys, unexpected_keys = self.model.load_state_dict(checkpoint_dict['model'], strict=False)
         
         self.log("[INFO] unexpected_keys:", unexpected_keys)
@@ -1240,6 +1247,6 @@ class PaletteTrainer(object):
                 self.model.mean_count = checkpoint_dict['mean_count']
             if 'mean_density' in checkpoint_dict:
                 self.model.mean_density = checkpoint_dict['mean_density']
-            with torch.cuda.amp.autocast(enabled=self.fp16):
-                self.model.update_extra_state()
+            # with torch.cuda.amp.autocast(enabled=self.fp16):
+            #     self.model.update_extra_state()
 

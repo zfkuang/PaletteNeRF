@@ -445,3 +445,29 @@ class _composite_rays_flex(Function):
 
 
 composite_rays_flex = _composite_rays_flex.apply
+
+
+
+class _spread_ray_to_sample(Function):
+    @staticmethod
+    @custom_fwd(cast_inputs=torch.float32)
+    def forward(ctx, input, rays, output):
+        ''' composite rays' rgbs, according to the ray marching formula.
+        Args:
+            input: float, [N, n_channel]
+            rays: int32, [N, 3]
+        In-place Outputs:
+            output: float, [M, 3], the output channel
+        '''
+        
+        input = input.contiguous()
+        output = output.contiguous()
+
+        N = input.shape[0]
+        M = output.shape[0]
+        n_channel = input.shape[-1]
+
+        _backend.spread_ray_to_sample(input, rays, M, N, n_channel, output)
+        return tuple()
+
+spread_ray_to_sample = _spread_ray_to_sample.apply

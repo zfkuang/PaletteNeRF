@@ -19,4 +19,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("march_rays", &march_rays, "march rays (CUDA)");
     m.def("composite_rays", &composite_rays, "composite rays (CUDA)");
     m.def("composite_rays_flex", &composite_rays_flex, "composite rays flexible (CUDA)");
+    m.def("spread_ray_to_sample", &spread_ray_to_sample, "spread rays to sample points(CUDA)");
 }

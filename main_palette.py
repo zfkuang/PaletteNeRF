@@ -73,10 +73,10 @@ if __name__ == '__main__':
     parser.add_argument('--separate_radiance', action='store_true', help="use radiance from a separated output")
     parser.add_argument('--continue_training', action='store_true', help="continue training")
     parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
-    parser.add_argument("--lambda_sparsity", type=float, default=4e-4, help='weight of sparsity loss')
+    parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
     parser.add_argument("--lambda_smooth", type=float, default=2e-3, help='weight of smooth loss')
     parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.05, help='weight of delta color loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.04, help='weight of delta color loss')
     parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
     parser.add_argument("--lambda_palette", type=float, default=0.005, help='weight of weight loss')
     parser.add_argument("--sigma_clip", type=float, default=0, help='sigma of clip feature (used in smooth loss)')
@@ -104,7 +104,7 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
-    palette_workspace=os.path.dirname(os.path.dirname(opt.nerf_path)).replace("results", "results_palette")
+    palette_workspace=opt.nerf_path.replace("results", "results_palette")
     if opt.use_normalized_palette:
         palette_workspace = palette_workspace.replace("version", "normalized_version")
     os.makedirs(palette_workspace, exist_ok=True)
@@ -166,9 +166,12 @@ if __name__ == '__main__':
                                 use_checkpoint=opt.ckpt, nerf_path=None)
         if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
+            test_loader = NeRFDataset(opt, device=device, type='train').dataloader()
             palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
             hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
-            gui = PaletteGUI(opt, trainer, palette, hist_weights)
+            opt.H = test_loader._data.H
+            opt.W = test_loader._data.W
+            gui = PaletteGUI(opt, trainer, palette, hist_weights, train_loader=test_loader)
             gui.render()
         else:
             test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()

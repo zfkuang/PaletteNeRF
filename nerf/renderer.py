@@ -66,10 +66,12 @@ class NeRFRenderer(nn.Module):
                  min_near=0.2,
                  density_thresh=0.01,
                  bg_radius=-1,
+                 filter_camera_point=False
                  ):
         super().__init__()
 
         self.bound = bound
+        self.filter_camera_point = filter_camera_point
         self.cascade = 1 + math.ceil(math.log2(bound))
         self.grid_size = 128
         self.density_scale = density_scale
@@ -253,13 +255,14 @@ class NeRFRenderer(nn.Module):
         }
 
 
-    def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
+    def run_cuda(self, rays_o, rays_d, rays_gt=None, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: image: [B, N, 3], depth: [B, N]
 
         prefix = rays_o.shape[:-1]
         rays_o = rays_o.contiguous().view(-1, 3)
         rays_d = rays_d.contiguous().view(-1, 3)
+        if rays_gt is not None:rays_gt = rays_gt.contiguous().view(-1, 3)
 
         N = rays_o.shape[0] # N = B * N, in fact
         device = rays_o.device
@@ -288,12 +291,21 @@ class NeRFRenderer(nn.Module):
             #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
             
             sigmas, rgbs = self(xyzs, dirs)
+
             # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
             # sigmas = density_outputs['sigma']
             # rgbs = self.color(xyzs, dirs, **density_outputs)
             sigmas = self.density_scale * sigmas
 
             #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
+            if rays_gt is not None:
+                gt_rgbs = torch.zeros_like(xyzs)
+                raymarching.spread_ray_to_sample(rays_gt, rays, gt_rgbs)
+                rgb_norm = ((gt_rgbs-rgbs)**2).sum(-1, keepdim=True).repeat(1, 3)
+                #rgb_norm_map = raymarching.composite_rays_flex_train(sigmas, rgb_norm, deltas, rays, T_thresh)
+            else:
+                rgb_norm = torch.zeros_like(rgbs)
+
 
             # special case for CCNeRF's residual learning
             if len(sigmas.shape) == 2:
@@ -311,12 +323,13 @@ class NeRFRenderer(nn.Module):
                 image = torch.stack(images, axis=0) # [K, B, N, 3]
 
             else:
-
                 weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, deltas, rays, T_thresh)
+                _, _, rgb_norm_map = raymarching.composite_rays_train(sigmas, rgb_norm, deltas, rays, T_thresh)
                 image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
                 depth = torch.clamp(depth - nears, min=0) / (fars - nears)
                 image = image.view(*prefix, 3)
                 depth = depth.view(*prefix)
+                rgb_norm_map = rgb_norm_map.mean(dim=-1).view(*prefix)
             
             results['weights_sum'] = weights_sum
 
@@ -370,9 +383,11 @@ class NeRFRenderer(nn.Module):
             depth = torch.clamp(depth - nears, min=0) / (fars - nears)
             image = image.view(*prefix, 3)
             depth = depth.view(*prefix)
+            rgb_norm_map = torch.zeros_like(image[...,0])
         
         results['depth'] = depth
         results['image'] = image
+        results['rgb_norm'] =rgb_norm_map
         results['weights_sum'] = weights_sum
 
         return results
@@ -397,6 +412,7 @@ class NeRFRenderer(nn.Module):
         Z = torch.arange(self.grid_size, dtype=torch.int32, device=self.density_bitfield.device).split(S)
 
         count = torch.zeros_like(self.density_grid)
+        too_close = torch.zeros_like(self.density_grid)
         poses = poses.to(count.device)
 
         # 5-level loop, forgive me...
@@ -433,11 +449,17 @@ class NeRFRenderer(nn.Module):
                             mask_y = torch.abs(cam_xyzs[:, :, 1]) < cy / fy * cam_xyzs[:, :, 2] + half_grid_size * 2
                             mask = (mask_z & mask_x & mask_y).sum(0).reshape(-1) # [N]
 
+                            mask_close = ((cam_xyzs[:, :, 2] < self.min_near) & mask_z & mask_x & mask_y).sum(0).reshape(-1) # [S, N]
+                            mask_camera = (cam_xyzs.norm(dim=-1) < self.min_near).sum(0).reshape(-1)
                             # update count 
                             count[cas, indices] += mask
+                            too_close[cas, indices] += mask_close
+                            if self.filter_camera_point:
+                                too_close[cas, indices] += mask_camera
                             head += S
     
         # mark untrained grid as -1
+        count = count * (too_close==0).long()
         self.density_grid[count == 0] = -1
 
         print(f'[mark untrained grid] {(count == 0).sum()} from {self.grid_size ** 3 * self.cascade}')
@@ -539,7 +561,7 @@ class NeRFRenderer(nn.Module):
         #print(f'[density grid] min={self.density_grid.min().item():.4f}, max={self.density_grid.max().item():.4f}, mean={self.mean_density:.4f}, occ_rate={(self.density_grid > 0.01).sum() / (128**3 * self.cascade):.3f} | [step counter] mean={self.mean_count}')
 
 
-    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, **kwargs):
+    def render(self, rays_o, rays_d, rays_gt=None, staged=False, max_ray_batch=4096, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: pred_rgb: [B, N, 3]
 
@@ -555,23 +577,27 @@ class NeRFRenderer(nn.Module):
         if staged and not self.cuda_ray:
             depth = torch.empty((B, N), device=device)
             image = torch.empty((B, N, 3), device=device)
+            rgb_norm = torch.empty((B, N), device=device)
             weights_sum = torch.empty((B, N), device=device)
 
             for b in range(B):
                 head = 0
                 while head < N:
                     tail = min(head + max_ray_batch, N)
-                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], **kwargs)
+                    input_rays_gt = rays_gt[b:b+1, head:tail] if rays_gt is not None else None
+                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], rays_gt=input_rays_gt, **kwargs)
                     depth[b:b+1, head:tail] = results_['depth']
                     image[b:b+1, head:tail] = results_['image']
+                    rgb_norm[b:b+1, head:tail] = results_['rgb_norm']
                     weights_sum[b:b+1, head:tail] = results_['weights_sum']
                     head += max_ray_batch
             
             results = {}
             results['depth'] = depth
             results['image'] = image
+            results['rgb_norm'] = rgb_norm
             results['weights_sum'] = weights_sum
         else:
-            results = _run(rays_o, rays_d, **kwargs)
+            results = _run(rays_o, rays_d, rays_gt, **kwargs)
 
         return results

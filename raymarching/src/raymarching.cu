@@ -844,6 +844,54 @@ void composite_rays_flex_train_backward(const at::Tensor grad_output, const at::
 }
 
 
+template <typename scalar_t>
+__global__ void kernel_spread_ray_to_sample(
+    const scalar_t * __restrict__ input,
+    const int * __restrict__ rays,
+    const uint32_t M, const uint32_t N, const uint32_t n_channel,
+    scalar_t * output
+) {
+    // parallel per ray
+    const uint32_t n = threadIdx.x + blockIdx.x * blockDim.x;
+    if (n >= N) return;
+
+    // locate 
+    uint32_t index = rays[n * 3];
+    uint32_t offset = rays[n * 3 + 1];
+    uint32_t num_steps = rays[n * 3 + 2];
+
+    // empty ray, or ray that exceed max step count.
+    if (num_steps == 0) {
+        return;
+    }
+
+    input += index * n_channel;
+    output += offset * n_channel;
+
+    // accumulate 
+    uint32_t step = 0;
+
+    while (step < num_steps && offset + step < M) {
+
+        for(int i = 0; i < n_channel; i ++)
+            output[i] = input[i];
+        // locate
+        output += n_channel;
+        step++;
+    }
+}
+
+void spread_ray_to_sample(const at::Tensor input, const at::Tensor rays, 
+                                        const uint32_t M, const uint32_t N, const uint32_t n_channel, at::Tensor output) {
+
+    static constexpr uint32_t N_THREAD = 128;
+    CHECK_CHANNEL(n_channel)
+    AT_DISPATCH_FLOATING_TYPES_AND_HALF(
+    input.scalar_type(), "spread_ray_to_sample", ([&] {
+        kernel_spread_ray_to_sample<<<div_round_up(N, N_THREAD), N_THREAD>>>(input.data_ptr<scalar_t>(),
+                                                rays.data_ptr<int>(), M, N, n_channel, output.data_ptr<scalar_t>());
+    }));
+}
 
 
 

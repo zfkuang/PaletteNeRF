@@ -32,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--update_extra_interval', type=int, default=16, help="iter interval to update extra status (only valid when using --cuda_ray)")
     parser.add_argument('--max_ray_batch', type=int, default=4096, help="batch size of rays at inference to avoid OOM (only valid when NOT using --cuda_ray)")
     parser.add_argument('--patch_size', type=int, default=1, help="[experimental] render patches in training, so as to apply LPIPS loss. 1 means disabled, use [64, 32, 16] to enable")
+    parser.add_argument('--lambda_sparse', type=float, default=0.05, help="[experimental] lambda for sparsity loss")
 
     ### network backbone options
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
@@ -49,6 +50,7 @@ if __name__ == '__main__':
     parser.add_argument('--min_near', type=float, default=0.2, help="minimum near distance for camera")
     parser.add_argument('--density_thresh', type=float, default=10, help="threshold for density grid to be occupied")
     parser.add_argument('--bg_radius', type=float, default=-1, help="if positive, use a background model at sphere(bg_radius)")
+    parser.add_argument('--no_bg', action='store_true', help="no background")
 
     ### GUI options
     parser.add_argument('--gui', action='store_true', help="start a GUI")
@@ -63,6 +65,8 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
+    
+    parser.add_argument('--filter_camera_point', action='store_true', help="filter out grids that are too close to camera")
     opt = parser.parse_args()
 
     if opt.O:
@@ -99,6 +103,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
+        filter_camera_point=opt.filter_camera_point
     )
     
     print(model)
@@ -123,12 +128,15 @@ if __name__ == '__main__':
         trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
         if opt.gui:
-            gui = NeRFGUI(opt, trainer)
+            test_loader = NeRFDataset(opt, device=device, type='train').dataloader()
+            opt.H = test_loader._data.H
+            opt.W = test_loader._data.W
+            gui = NeRFGUI(opt, trainer, test_loader)
             gui.render()
         
         else:
-            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
 
+            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
     

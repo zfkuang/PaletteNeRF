@@ -65,7 +65,7 @@ class NeRFGUI:
 
         self.trainer = trainer
         self.train_loader = train_loader
-        if train_loader is not None:
+        if train_loader is not None and not opt.test:
             self.trainer.error_map = train_loader._data.error_map
 
         self.render_buffer = np.zeros((self.W, self.H, 3), dtype=np.float32)
@@ -171,7 +171,7 @@ class NeRFGUI:
         dpg.set_primary_window("_primary_window", True)
 
         # control window
-        with dpg.window(label="Control", tag="_control_window", width=400, height=300):
+        with dpg.window(label="Control", tag="_control_window", width=400, height=self.H, pos=(self.W, 0)):
 
             # button theme
             with dpg.theme() as theme_button:
@@ -290,6 +290,34 @@ class NeRFGUI:
                     self.need_update = True
 
                 dpg.add_color_edit((255, 255, 255), label="Background Color", width=200, tag="_color_editor", no_alpha=True, callback=callback_change_bg)
+                
+                # set test cam
+                def callback_set_testcam(sender, app_data):
+                    test_pose = self.train_loader._data.poses[app_data-1].detach().cpu().numpy()
+                    self.cam.rot = R.from_matrix(test_pose[:3, :3])
+                    self.cam.radius = 2
+                    center = test_pose[:3, :3] @ np.array([0, 0, -self.cam.radius])[...,np.newaxis]
+                    self.cam.center = center[:,0] - test_pose[:3, 3]
+                    #     @property
+                    # def pose(self):
+                    #     # first move camera to radius
+                    #     res = np.eye(4, dtype=np.float32)
+                    #     res[2, 3] -= self.radius
+                    #     # rotate
+                    #     rot = np.eye(4, dtype=np.float32)
+                    #     rot[:3, :3] = self.rot.as_matrix()
+                    #     res = rot @ res
+                    #     # translate
+                    #     res[:3, 3] -= self.center
+                    #     return res
+                    def intrinsics(self):
+                        focal = self.H / (2 * np.tan(np.radians(self.fovy) / 2))
+                        return np.array([focal, focal, self.W // 2, self.H // 2])
+                    fovy = self.train_loader._data.intrinsics[1] 
+                    self.cam.fovy = np.degrees(np.arctan(self.train_loader._data.H / fovy / 2) * 2)
+                    self.cam.pose
+                    self.need_update = True
+                dpg.add_slider_int(label="test_pose", min_value=1, max_value=len(self.train_loader._data.poses), format="%d", default_value=0, callback=callback_set_testcam)
 
                 # fov slider
                 def callback_set_fovy(sender, app_data):
@@ -399,7 +427,7 @@ class NeRFGUI:
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)
 
         
-        dpg.create_viewport(title='torch-ngp', width=self.W, height=self.H, resizable=False)
+        dpg.create_viewport(title='torch-ngp', width=self.W+400, height=self.H, resizable=False)
         
         # TODO: seems dearpygui doesn't support resizing texture...
         # def callback_resize(sender, app_data):

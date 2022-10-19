@@ -433,21 +433,21 @@ class Trainer(object):
         rays_d = data['rays_d'] # [B, N, 3]
 
         # if there is no gt image, we train with CLIP loss.
-        if 'images' not in data:
+        # if 'images' not in data:
 
-            B, N = rays_o.shape[:2]
-            H, W = data['H'], data['W']
+        #     B, N = rays_o.shape[:2]
+        #     H, W = data['H'], data['W']
 
-            # currently fix white bg, MUST force all rays!
-            outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, **vars(self.opt))
-            pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous()
+        #     # currently fix white bg, MUST force all rays!
+        #     outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=None, perturb=True, force_all_rays=True, **vars(self.opt))
+        #     pred_rgb = outputs['image'].reshape(B, H, W, 3).permute(0, 3, 1, 2).contiguous()
 
-            # [debug] uncomment to plot the images used in train_step
-            #torch_vis_2d(pred_rgb[0])
+        #     # [debug] uncomment to plot the images used in train_step
+        #     #torch_vis_2d(pred_rgb[0])
 
-            loss = self.clip_loss(pred_rgb)
+        #     loss = self.clip_loss(pred_rgb)
             
-            return pred_rgb, None, loss
+        #     return pred_rgb, None, loss
 
         images = data['images'] # [B, N, 3/4]
 
@@ -456,7 +456,7 @@ class Trainer(object):
         if self.opt.color_space == 'linear':
             images[..., :3] = srgb_to_linear(images[..., :3])
 
-        if C == 3 or self.model.bg_radius > 0:
+        if (C == 3 or self.model.bg_radius > 0) and not self.opt.no_bg:
             bg_color = 1
         # train with random background color if not using a bg model and has alpha channel.
         else:
@@ -469,13 +469,19 @@ class Trainer(object):
         else:
             gt_rgb = images
 
-        outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, **vars(self.opt))
+        outputs = self.model.render(rays_o, rays_d, rays_gt=gt_rgb, staged=False, bg_color=bg_color, perturb=True, force_all_rays=False if self.opt.patch_size == 1 else True, **vars(self.opt))
         # outputs = self.model.render(rays_o, rays_d, staged=False, bg_color=bg_color, perturb=True, force_all_rays=True, **vars(self.opt))
     
         pred_rgb = outputs['image']
+        pred_rgb_norm = outputs['rgb_norm']
+        #pred_weight_sum = outputs['weights_sum']
 
         # MSE loss
         loss = self.criterion(pred_rgb, gt_rgb).mean(-1) # [B, N, 3] --> [B, N]
+        loss += pred_rgb_norm * self.lambda_sparse # [B, N, 1] --> [B, N]
+        # if self.opt.no_bg:
+        #     loss += (1-pred_weight_sum) # [B, N, 1] --> [B, N]
+
 
         # patch-based rendering
         if self.opt.patch_size > 1:
@@ -606,6 +612,7 @@ class Trainer(object):
         
         for epoch in range(self.epoch + 1, max_epochs + 1):
             self.epoch = epoch
+            self.lambda_sparse = self.opt.lambda_sparse * min(1, epoch / 50)
 
             self.train_one_epoch(train_loader)
 

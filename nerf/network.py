@@ -56,12 +56,12 @@ class NeRFNetwork(NeRFRenderer):
             if l == 0:
                 in_dim = self.in_dim_dir + self.geo_feat_dim
             else:
-                in_dim = hidden_dim_color
+                in_dim = hidden_dim
             
             if l == num_layers_color - 1:
                 out_dim = 3 # 3 rgb
             else:
-                out_dim = hidden_dim_color
+                out_dim = hidden_dim
             
             color_net.append(nn.Linear(in_dim, out_dim, bias=False))
 

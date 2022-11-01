@@ -631,7 +631,7 @@ class Trainer(object):
         self.evaluate_one_epoch(loader, name)
         self.use_tensorboardX = use_tensorboardX
 
-    def test(self, loader, save_path=None, name=None, write_video=True):
+    def test(self, loader, save_path=None, name=None, write_video=True, selected_idx=None):
 
         if save_path is None:
             save_path = os.path.join(self.workspace, 'results')
@@ -653,7 +653,8 @@ class Trainer(object):
         with torch.no_grad():
 
             for i, data in enumerate(loader):
-                
+                if selected_idx is not None and i != selected_idx:
+                    continue
                 with torch.cuda.amp.autocast(enabled=self.fp16):
                     preds, preds_depth = self.test_step(data)
 
@@ -697,7 +698,9 @@ class Trainer(object):
         # mark untrained grid
         if self.global_step == 0:
             self.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
-
+        
+        self.lambda_sparse = self.opt.lambda_sparse 
+        
         for _ in range(step):
             
             # mimic an infinite loop dataloader (in case the total dataset is smaller than step)

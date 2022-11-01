@@ -1,16 +1,15 @@
 #! /bin/bash
 
-name="nerf_trex"
+datatype="blender"
+name="nerf_chair"
 bound=2
-scale=0.25
-bg_radius=4
-offset='0 0 1.0'
+scale=0.8
+bg_radius=0
 density_thresh=10
-lambda_sparse=0.05
-iters=10000
-min_near=0.2
-data_dir="../data/nerf_llff_data/trex"
-nerf_model="./results/${name}/version_1"
+iters=30000
+offset='0 0 0'
+data_dir="../data/nerf_synthetic/chair"
+nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -19,6 +18,11 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;    
+    -v|--video)
+      video=True
+      shift # past argument
+      shift # past value
+      ;;
     -g|--gui)
       gui=True
       shift # past argument
@@ -34,6 +38,8 @@ done
 
 if [ $gui ]; then
     test_mode='--test --gui'
+elif [ $video ]; then
+    test_mode='--test --video'
 elif [ $test ]; then
     test_mode='--test'
 else
@@ -50,9 +56,8 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --min_near ${min_near} \
     -O \
-    --filter_camera_point \
+    --dt_gamma 0 \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -62,8 +67,8 @@ elif [[ $model == 'extract' ]]; then
     --bound ${bound} \
     --scale ${scale} \
     --bg_radius ${bg_radius} \
-    --density_thresh ${density_thresh} 
-    --min_near ${min_near} 
+    --density_thresh ${density_thresh}  \
+    --extract_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
     $data_dir \
@@ -75,11 +80,12 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --min_near ${min_near} \
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --dt_gamma 0 \
+    --datatype ${datatype} \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

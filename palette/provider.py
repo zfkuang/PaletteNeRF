@@ -162,14 +162,13 @@ class NeRFDataset:
         else:
             # we have to actually read an image to get H and W later.
             self.H = self.W = None
-        
+
         # read images
         frames = transform["frames"]
         #frames = sorted(frames, key=lambda d: d['file_path']) # why do I sort...
         
-        # for colmap, manually interpolate a test set.
         if self.mode == 'colmap' and type == 'test':
-            
+
             # choose two random poses, and interpolate between.
             f0, f1 = np.random.choice(frames, 2, replace=False)
             pose0 = nerf_matrix_to_ngp(np.array(f0['transform_matrix'], dtype=np.float32), scale=self.scale, offset=self.offset) # [4, 4]
@@ -234,52 +233,80 @@ class NeRFDataset:
                 self.feat_images = []
             else:
                 self.feat_images = None
+
             for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
                 f_path = os.path.join(self.root_path, f['file_path'])
                 if self.mode == 'blender' and '.' not in os.path.basename(f_path):
                     f_path += '.png' # so silly...
 
                 # there are non-exist paths in fox...
-                if not os.path.exists(f_path):
+                if not os.path.exists(f_path) and type != 'video':
                     continue
                 
                 pose = np.array(f['transform_matrix'], dtype=np.float32) # [4, 4]
                 pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
 
-                image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
-                if image.dtype == np.uint16 and image.max() > 500:
-                    image = (image // 256).astype(np.uint8)
-                if self.H is None or self.W is None:
-                    self.H = image.shape[0] // downscale
-                    self.W = image.shape[1] // downscale
-
-                # add support for the alpha channel as a mask.
-                if image.shape[-1] == 3: 
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                else:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
-
-                if image.shape[0] != self.H or image.shape[1] != self.W:
-                    image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
-                image = image.astype(np.float32) / 255 # [H, W, 3/4]
-
-                if self.opt.pred_clip and type == 'train':
-                    feat_image = np.load(os.path.join(self.root_path, 'lseg_feature', os.path.basename(f_path)+".npy")) # [H, W, D_clip]
-                    feat_image = torch.from_numpy(feat_image)
-                    feat_image = feat_image.permute(2, 0, 1)[None,...]
-                    feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
-                    if self.preload:
-                        feat_image = feat_image.to(self.device)
-                    self.feat_images.append(feat_image[0].permute(1, 2, 0))
-
                 self.poses.append(pose)
-                self.images.append(image)
-            
-        self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
-        if self.images is not None:
+
+                if os.path.exists(f_path):
+                    image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
+                    if image.dtype == np.uint16 and image.max() > 500:
+                        image = (image // 256).astype(np.uint8)
+                    if self.H is None or self.W is None:
+                        self.H = image.shape[0] // downscale
+                        self.W = image.shape[1] // downscale
+
+                    # add support for the alpha channel as a mask.
+                    if image.shape[-1] == 3: 
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    else:
+                        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+
+                    if image.shape[0] != self.H or image.shape[1] != self.W:
+                        image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
+                    image = image.astype(np.float32) / 255 # [H, W, 3/4]
+
+                    if self.opt.pred_clip and type == 'train':
+                        feat_image = np.load(os.path.join(self.root_path, 'lseg_feature', os.path.basename(f_path)+".npy")) # [H, W, D_clip]
+                        feat_image = torch.from_numpy(feat_image)
+                        feat_image = feat_image.permute(2, 0, 1)[None,...]
+                        feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
+                        if self.preload:
+                            feat_image = feat_image.to(self.device)
+                        self.feat_images.append(feat_image[0].permute(1, 2, 0))
+
+                    self.images.append(image)
+             
+        # load intrinsics
+        if 'fl_x' in transform or 'fl_y' in transform:
+            fl_x = (transform['fl_x'] if 'fl_x' in transform else transform['fl_y']) / downscale
+            fl_y = (transform['fl_y'] if 'fl_y' in transform else transform['fl_x']) / downscale
+        elif 'camera_angle_x' in transform or 'camera_angle_y' in transform:
+            # blender, assert in radians. already downscaled since we use H/W
+            fl_x = self.W / (2 * np.tan(transform['camera_angle_x'] / 2)) if 'camera_angle_x' in transform else None
+            fl_y = self.H / (2 * np.tan(transform['camera_angle_y'] / 2)) if 'camera_angle_y' in transform else None
+            if fl_x is None: fl_x = fl_y
+            if fl_y is None: fl_y = fl_x
+        else:
+            raise RuntimeError('Failed to load focal length, please check the transforms.json!')
+
+        cx = (transform['cx'] / downscale) if 'cx' in transform else (self.W / 2)
+        cy = (transform['cy'] / downscale) if 'cy' in transform else (self.H / 2)
+    
+        self.intrinsics = np.array([fl_x, fl_y, cx, cy])
+
+        if isinstance(self.poses, list):
+            self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
+        else:
+            self.poses = torch.from_numpy(self.poses) # [N, 4, 4]
+        if self.images is not None and len(self.images) > 0:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]
-        if self.feat_images is not None:
+        else:
+            self.images = None
+        if self.feat_images is not None and len(self.images) > 0:
             self.feat_images = torch.stack(self.feat_images, dim=0) #  # [N, H, W, D_clip]
+        else:
+            self.feat_images = None
         
         # calculate mean radius of all camera poses
         self.radius = self.poses[:, :3, 3].norm(dim=-1).mean(0).item()
@@ -317,23 +344,7 @@ class NeRFDataset:
                 self.error_map = self.error_map.to(self.device)
             torch.cuda.empty_cache()
 
-        # load intrinsics
-        if 'fl_x' in transform or 'fl_y' in transform:
-            fl_x = (transform['fl_x'] if 'fl_x' in transform else transform['fl_y']) / downscale
-            fl_y = (transform['fl_y'] if 'fl_y' in transform else transform['fl_x']) / downscale
-        elif 'camera_angle_x' in transform or 'camera_angle_y' in transform:
-            # blender, assert in radians. already downscaled since we use H/W
-            fl_x = self.W / (2 * np.tan(transform['camera_angle_x'] / 2)) if 'camera_angle_x' in transform else None
-            fl_y = self.H / (2 * np.tan(transform['camera_angle_y'] / 2)) if 'camera_angle_y' in transform else None
-            if fl_x is None: fl_x = fl_y
-            if fl_y is None: fl_y = fl_x
-        else:
-            raise RuntimeError('Failed to load focal length, please check the transforms.json!')
 
-        cx = (transform['cx'] / downscale) if 'cx' in transform else (self.W / 2)
-        cy = (transform['cy'] / downscale) if 'cy' in transform else (self.H / 2)
-    
-        self.intrinsics = np.array([fl_x, fl_y, cx, cy])
 
 
     def collate(self, index):

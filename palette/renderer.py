@@ -90,6 +90,7 @@ class RegionEdit(nn.Module):
         self.std_clip = 1
         self.weight_mode = False
         self.delta_hsv = torch.zeros(self.opt.num_basis, 3)
+        self.delta_hsv[...,1:3] = 1
 
     def update_cent(self, mean_xyz, mean_clip):     
         self.mean_xyz = mean_xyz[None,...]
@@ -112,8 +113,8 @@ class RegionEdit(nn.Module):
         hsv_new = hsv_all[self.opt.num_basis:]
 
         self.delta_hsv[:, 0] = torch.fmod((hsv_new[:,0]-hsv_orig[:,0]+360), 360)
-        self.delta_hsv[:, 1] = hsv_new[:,1]-hsv_orig[:,1]
-        self.delta_hsv[:, 2] = hsv_new[:,2]-hsv_orig[:,2]
+        self.delta_hsv[:, 1] = (hsv_new[:,1]/hsv_orig[:,1]+1e-9)
+        self.delta_hsv[:, 2] = (hsv_new[:,2]/hsv_orig[:,2]+1e-9)
         # import pdb
         # pdb.set_trace()
 
@@ -129,15 +130,50 @@ class RegionEdit(nn.Module):
 
         hsv_new = hsv.clone()
         hsv_new[...,0] = torch.fmod((hsv[...,0]+self.delta_hsv[...,0]+360), 360)
-        hsv_new[...,1] = torch.clip((hsv[...,1]+self.delta_hsv[...,1]), 0, 100)
-        hsv_new[...,2] = torch.clip((hsv[...,2]+self.delta_hsv[...,2]), 0, 100)
+        hsv_new[...,1] = torch.clip((hsv[...,1]*self.delta_hsv[...,1]), 0, 100)
+        hsv_new[...,2] = torch.clip((hsv[...,2]*self.delta_hsv[...,2]), 0, 100)
 
         rgb_new = hsv_to_rgb(hsv_new)
         if self.weight_mode:
             return weight[...,None].repeat(1, self.opt.num_basis, 3) 
         else:
             return torch.lerp(rgbs, rgb_new, weight[...,None])
-
+        
+class Stylizer(nn.Module):
+    def __init__(self, opt):
+        super().__init__()
+        self.opt = opt
+        dI = torch.zeros(1, dtype=torch.float32)
+        self.dI = torch.nn.Parameter(dI, requires_grad=True)
+        dP = torch.zeros(1, opt.num_basis, 3, dtype=torch.float32)
+        self.dP = torch.nn.Parameter(dP, requires_grad=True)
+        ddelta = torch.eye(3, dtype=torch.float32)[None,:,:].repeat(opt.num_basis, 1, 1) # N_p x 3 x 3
+        self.ddelta = torch.nn.Parameter(ddelta, requires_grad=True)
+        
+    def ARAP_loss(self):
+        I = torch.eye(3, dtype=torch.float32, device=self.ddelta.device)[None,:,:]
+        return ((torch.bmm(self.ddelta, self.ddelta.transpose(1, 2)) - I)**2).sum()
+    
+    def forward(self, radiance, omega, palette, delta, dir=None):
+        assert(not self.opt.multiply_delta and self.opt.separate_radiance)
+        
+        prefix = delta.shape[:-2]
+        radiance = radiance.reshape(-1, 1, 1)
+        omega = omega.reshape(-1, self.opt.num_basis, 1)
+        palette = palette.reshape(-1, self.opt.num_basis, 3)
+        delta = delta.reshape(-1, self.opt.num_basis, 3)
+        
+        palette = (palette+self.dP) # N x N-p x 3
+        delta = torch.einsum("npi, pij->npj", delta, self.ddelta) # N x N_p x 3
+        
+        basis_rgb = ((F.softplus(radiance)+self.dI).clamp(0)*(palette+delta)).clamp(0, 1) # N x N_p x 3
+        basis_rgb = omega*basis_rgb # N, N_p, 3
+        rgbs = basis_rgb.sum(dim=-2) # N, 3
+        
+        if dir is not None:
+            rgbs += dir.detach() # N, 3
+        return rgbs.reshape(*prefix, 3)
+    
 class PaletteRenderer(nn.Module):
     def __init__(self,
                  opt,
@@ -163,6 +199,7 @@ class PaletteRenderer(nn.Module):
         self.color_weight = 0
         self.opt = opt
         self.edit = None
+        self.stylizer = None
 
         # prepare aabb with a 6D tensor (xmin, ymin, zmin, xmax, ymax, zmax)
         # NOTE: aabb (can be rectangular) is only used to generate points, we still rely on bound (always cubic) to calculate density grid and hashing.
@@ -470,7 +507,8 @@ class PaletteRenderer(nn.Module):
             # }
 
 
-    def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, max_steps=1024, T_thresh=1e-4, **kwargs):
+    def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, 
+                 max_steps=1024, T_thresh=1e-4, gui_mode=False, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: image: [B, N, 3], depth: [B, N]
 
@@ -562,6 +600,34 @@ class PaletteRenderer(nn.Module):
             # omega_norm_map, delta_rgb_norm_map, dir_rgb_norm_map = norm_rgb_map.permute(1, 0)
 
             if self.require_smooth_loss:
+                if self.opt.lambda_patchsmooth > 0 and self.opt.patch_size > 1:
+                    xyzs_diff = (xyzs + torch.rand_like(xyzs) * self.bound * 0.03).clamp(-self.bound, self.bound)
+                    xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
+                    _, clip_feat_diff, _, omega_diff, _, diffuse_diff =  self(xyzs_diff, dirs)
+
+                    diffuse_patch = diffuse.reshape(-1, self.opt.patch_size, self.opt.patch_size, 3)
+                    omega_patch = omega.reshape(-1, self.opt.patch_size, self.opt.patch_size, self.opt.num_basis)
+                    pixel_patch = torch.range(0, self.opt.patch_size*2+1, dtype=torch.float32, device=diffuse.device)
+                    pixel_patch = torch.cat(torch.meshgrid(pixel_patch, pixel_patch), dim=-1)[None,...] # 1 x pa x pa x 2
+                    pixel_patch = pixel_patch.repeat(diffuse_patch.shape[0], 1, 1, 1) - self.opt.patch_size//2 # M x pa x pa x 2
+                    
+                    diffuse_patch = diffuse_patch.reshape(diffuse_patch.shape[0], -1, 3) 
+                    omega_patch = omega_patch.reshape(diffuse_patch.shape[0], -1, self.opt.num_basis) 
+                    pixel_patch = pixel_patch.reshape(pixel_patch.shape[0], -1, 2) 
+                    
+                    perm = torch.randperm(self.opt.patch**2)
+                    diffuse_diffpatch = diffuse_patch[:, perm]
+                    omega_diffpatch = omega_patch[:, perm]
+                    pixel_diffpatch = pixel_patch[:, perm]
+                    
+                    xyzs_weight_patch = (pixel_patch-pixel_diffpatch).norm(dim=-1, keepdim=True)**2 / (self.opt.patch_size * 0.5)
+                    rgb_weight_patch = (diffuse_patch-diffuse_diffpatch).norm(dim=-1, keepdim=True) / self.opt.sigma_color # (N_rays, N_samples_, 1)
+                    
+                    smooth_weight_patch = (xyzs_weight_patch + rgb_weight_patch).detach()
+                    smooth_weight_patch = torch.exp(-smooth_weight_patch)
+                    smooth_patch_norm = ((omega_patch-omega_diffpatch)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight_patch
+                    smooth_patch_norm = smooth_patch_norm.reshape(M, 1)
+                    
                 xyzs_diff = (xyzs + torch.rand_like(xyzs) * self.bound * 0.03).clamp(-self.bound, self.bound)
                 xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.01)
                 _, clip_feat_diff, _, omega_diff, _, diffuse_diff =  self(xyzs_diff, dirs)
@@ -584,10 +650,6 @@ class PaletteRenderer(nn.Module):
                 smooth_weight = torch.exp(-smooth_weight)
                 smooth_norm = ((omega_diff-omega)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight
 
-                # norm_rgb_2 = torch.cat([smooth_norm, smooth_norm, smooth_norm], dim=-1)
-                # _, _, norm_rgb_map_2 = raymarching.composite_rays_train(sigmas, norm_rgb_2, deltas, rays, T_thresh)
-                # smooth_norm_map = norm_rgb_map_2[...,0:1]
-                # smooth_norm_map = smooth_norm_map.view(*prefix)
             else:
                 # smooth_norm_map = None
                 smooth_norm = torch.zeros_like(omega_norm)
@@ -601,16 +663,18 @@ class PaletteRenderer(nn.Module):
             #     basis_acc_map_list.append(basis_acc_map[...,ln:])
             # basis_acc_map = torch.cat(basis_acc_map_list, dim=-1)
 
-            all_buffer = torch.cat([omega_norm, dir_rgb_norm, delta_rgb_norm, smooth_norm, dir_color, direct_rgb, clip_feat, omega[...,0]], axis=-1)
+            all_buffer = torch.cat([omega_norm, dir_rgb_norm, delta_rgb_norm, smooth_norm, smooth_patch_norm, 
+                                    dir_color, direct_rgb, clip_feat, omega[...,0]], axis=-1)
             all_map = raymarching.composite_rays_flex_train(sigmas, all_buffer, deltas, rays, T_thresh)
             omega_norm_map = all_map[...,0:1]
             dir_rgb_norm_map = all_map[...,1:2]
             delta_rgb_norm_map = all_map[...,2:3]
             smooth_norm_map = all_map[...,3:4]
-            dir_rgb_map = all_map[...,4:7]
-            direct_rgb_map = all_map[...,7:10]
-            clip_feat_map = all_map[...,10:10+self.opt.clip_dim]
-            basis_acc_map = all_map[...,10+self.opt.clip_dim:10+self.opt.clip_dim+self.opt.num_basis]
+            smooth_patch_norm_map = all_map[...,4:5]
+            dir_rgb_map = all_map[...,5:8]
+            direct_rgb_map = all_map[...,8:11]
+            clip_feat_map = all_map[...,11:11+self.opt.clip_dim]
+            basis_acc_map = all_map[...,11+self.opt.clip_dim:10+self.opt.clip_dim+self.opt.num_basis]
 
             image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
             depth = torch.clamp(depth - nears, min=0) / (fars - nears)
@@ -622,6 +686,7 @@ class PaletteRenderer(nn.Module):
             dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
             delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
             smooth_norm_map = smooth_norm_map.view(*prefix)
+            smooth_patch_norm_map = smooth_patch_norm_map.view(*prefix)
             dir_rgb_map = dir_rgb_map.view(*prefix, 3)
             direct_rgb_map = direct_rgb_map.view(*prefix, 3)
             clip_feat_map = clip_feat_map.view(*prefix, self.opt.clip_dim)
@@ -631,6 +696,7 @@ class PaletteRenderer(nn.Module):
             results['image'] = image
             results['weights_sum'] = weights_sum
             results['smooth_norm'] = smooth_norm_map
+            results['smooth_patch_norm'] = smooth_patch_norm_map
             results['omega_norm'] = omega_norm_map
             results['dir_norm'] = dir_rgb_norm_map
             results['delta_norm'] = delta_rgb_norm_map
@@ -688,30 +754,33 @@ class PaletteRenderer(nn.Module):
 
                 basis_color = self.basis_color[None,:,:].clamp(0, 1)
                 
-                if self.opt.multiply_delta:
-                    final_color = (basis_color*d_color).clamp(0, 1)
+                if self.stylizer is not None:
+                    rgbs = self.stylizer(radiance, omega, basis_color, d_color, dir_color)
                 else:
-                    if self.opt.separate_radiance:
-                        final_color = (F.softplus(radiance)*(basis_color+d_color))# .clamp(0, 1)
+                    if self.opt.multiply_delta:
+                        final_color = (basis_color*d_color).clamp(0, 1)
                     else:
-                        final_color = (basis_color+d_color)# .clamp(0, 1)
-                    unscaled_final_color = (basis_color+d_color)# .clamp(0, 1)
+                        if self.opt.separate_radiance:
+                            final_color = (F.softplus(radiance)*(basis_color+d_color))# .clamp(0, 1)
+                        else:
+                            final_color = (basis_color+d_color)# .clamp(0, 1)
+                        unscaled_final_color = (basis_color+d_color)# .clamp(0, 1)
 
-                    
-                if self.edit is not None:
-                    final_color = self.edit(final_color, xyzs, clip_feat)
+                        
+                    if self.edit is not None:
+                        final_color = self.edit(final_color, xyzs, clip_feat)
 
-                basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
-                unscaled_basis_rgb = omega*unscaled_final_color
+                    basis_rgb = omega*final_color # N_rays, N_sample, N_basis, 3
+                    unscaled_basis_rgb = omega*unscaled_final_color
 
-                rgbs = basis_rgb.sum(dim=-2) + dir_color # (N_rays, N_samples_, 3)
+                    rgbs = basis_rgb.sum(dim=-2) + dir_color # (N_rays, N_samples_, 3)
 
                 # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
                 # sigmas = density_outputs['sigma']
                 # rgbs = self.color(xyzs, dirs, **density_outputs)
                 sigmas = self.density_scale * sigmas
 
-                if not self.opt.gui:
+                if not gui_mode:
                     ### palette parts
 
                     # dir_Color, direct_rgb, basis_rgb
@@ -736,17 +805,20 @@ class PaletteRenderer(nn.Module):
                 step += n_step
 
             image = image + (1 - weights_sum).unsqueeze(-1) * bg_color
+            depth_origin = depth.clone()
             depth = torch.clamp(depth - nears, min=0) / (fars - nears)
             image = image.view(*prefix, 3)
             depth = depth.view(*prefix)
+            depth_origin = depth_origin.view(*prefix)
             results['depth'] = depth
+            results['depth_origin'] = depth_origin
             results['image'] = image
             results['weights_sum'] = weights_sum
 
             clip_feat_map = clip_feat_map.view(*prefix, self.opt.clip_dim)
             results['clip_feat'] = clip_feat_map
 
-            if not self.opt.gui:
+            if not gui_mode:
                 direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
                 dir_rgb_map = dir_rgb_map.view(*prefix, 3)
                 direct_rgb_map = direct_rgb_map.view(*prefix, 3)
@@ -922,7 +994,7 @@ class PaletteRenderer(nn.Module):
 
     #     #print(f'[density grid] min={self.density_grid.min().item():.4f}, max={self.density_grid.max().item():.4f}, mean={self.mean_density:.4f}, occ_rate={(self.density_grid > 0.01).sum() / (128**3 * self.cascade):.3f} | [step counter] mean={self.mean_count}')
 
-    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, test_mode=False, **kwargs):
+    def render(self, rays_o, rays_d, staged=False, max_ray_batch=4096, test_mode=False, gui_mode=False, **kwargs):
         # rays_o, rays_d: [B, N, 3], assumes B == 1
         # return: pred_rgb: [B, N, 3]
 
@@ -941,7 +1013,7 @@ class PaletteRenderer(nn.Module):
                 head = 0
                 while head < N:
                     tail = min(head + max_ray_batch, N)
-                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, **kwargs)
+                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, gui_mode=gui_mode, **kwargs)
                     # results_.pop("weights_sum")
                     for k, v in results_.items():
                         if v is None:
@@ -957,6 +1029,6 @@ class PaletteRenderer(nn.Module):
                     head += max_ray_batch
             
         else:
-            results = _run(rays_o, rays_d, **kwargs)
+            results = _run(rays_o, rays_d, gui_mode=gui_mode, **kwargs)
 
         return results

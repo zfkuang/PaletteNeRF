@@ -1,17 +1,50 @@
 #! /bin/bash
 
-datatype="mip360"
-name="nerf_room"
-bound=2 
-scale=0.13 
+datatype="blender"
+name="nerf_ship"
+bound=2
+scale=0.8
 bg_radius=0
-offset='0 0 -0.5'
 density_thresh=10
-lambda_sparse=0.00
-iters=90000
-min_near=0.05
-data_dir='../data/mip360/room'
+iters=30000
+offset='0 0 0'
+data_dir="../data/nerf_synthetic/ship"
 nerf_model=./results/${name}/version_1
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    -t|--test)
+      test=True
+      shift # past argument
+      shift # past value
+      ;;    
+    -v|--video)
+      video=True
+      shift # past argument
+      shift # past value
+      ;;
+    -g|--gui)
+      gui=True
+      shift # past argument
+      shift # past value
+      ;;
+    -m|--model)
+      model="$2"
+      shift # past argument
+      shift # past value
+      ;;
+  esac
+done
+
+if [ $gui ]; then
+    test_mode='--test --gui'
+elif [ $video ]; then
+    test_mode='--test --video'
+elif [ $test ]; then
+    test_mode='--test'
+else
+    test_mode=''
+fi
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -58,10 +91,8 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --lambda_sparse ${lambda_sparse} \
-    --min_near ${min_near} \
-    --no_bg \
     -O \
+    --dt_gamma 0 \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -72,7 +103,6 @@ elif [[ $model == 'extract' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh}  \
-    --min_near ${min_near} \
     --extract_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -85,11 +115,11 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --min_near ${min_near} \
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --dt_gamma 0 \
     --datatype ${datatype} \
     $test_mode
 else

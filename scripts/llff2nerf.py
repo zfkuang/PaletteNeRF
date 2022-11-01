@@ -57,7 +57,7 @@ def visualize_poses(poses, size=0.1):
         segs = trimesh.load_path(segs)
         objects.append(segs)
 
-    trimesh.Scene(objects).show()
+    trimesh.Scene(objects).show()        
 
 if __name__ == '__main__':
 
@@ -66,6 +66,7 @@ if __name__ == '__main__':
     parser.add_argument('--images', type=str, default='images_8', help="images folder (do not include full path, e.g., just use `images_4`)")
     parser.add_argument('--downscale', type=float, default=8, help="image size down scale, e.g., 4")
     parser.add_argument('--hold', type=int, default=8, help="hold out for validation every $ images")
+    parser.add_argument('--datatype', type=str, required=True, choices=['llff', 'mip360', 'blender'], help="datatype for video generation")
 
     opt = parser.parse_args()
     print(f'[INFO] process {opt.path}')
@@ -95,8 +96,19 @@ if __name__ == '__main__':
 
     print(f'[INFO] H = {H}, W = {W}, fl = {fl} (downscale = {opt.downscale})')
 
+    if opt.datatype == 'llff':
+        from data_utils.llff import gen_renderposes
+        render_poses = gen_renderposes(poses, bounds)[:,:,:4]
+        render_poses[:, 0:3, 1] *= -1
+        render_poses[:, 0:3, 2] *= -1
+    elif opt.datatype == 'mip360':
+        from data_utils.nerf_360_v2 import gen_renderposes
+        render_poses = gen_renderposes(poses, bounds, 120)[:,:,:4]
+        render_poses[:, 0:3, 1] *= -1
+        render_poses[:, 0:3, 2] *= -1
     # inversion of this: https://github.com/Fyusion/LLFF/blob/c6e27b1ee59cb18f054ccb0f87a90214dbe70482/llff/poses/pose_utils.py#L51
     poses = np.concatenate([poses[..., 1:2], poses[..., 0:1], -poses[..., 2:3], poses[..., 3:4]], -1) # (N, 3, 4)
+    poses = np.concatenate([poses, render_poses], 0)
 
     # to homogeneous 
     last_row = np.tile(np.array([0, 0, 0, 1]), (len(poses), 1, 1)) # (N, 1, 4)
@@ -141,11 +153,13 @@ if __name__ == '__main__':
     # construct frames
 
     all_ids = np.arange(N)
+    video_ids = np.arange(N, len(poses))
     test_ids = all_ids[::opt.hold]
     train_ids = np.array([i for i in all_ids if i not in test_ids])
 
     frames_train = []
     frames_test = []
+    frames_video = []
     for i in train_ids:
         frames_train.append({
             'file_path': images[i],
@@ -154,6 +168,11 @@ if __name__ == '__main__':
     for i in test_ids:
         frames_test.append({
             'file_path': images[i],
+            'transform_matrix': poses[i].tolist(),
+        })
+    for i in video_ids:
+        frames_video.append({
+            'file_path': '---',
             'transform_matrix': poses[i].tolist(),
         })
 
@@ -180,4 +199,5 @@ if __name__ == '__main__':
     write_json('transforms_train.json', frames_train)
     write_json('transforms_val.json', frames_test[::10])
     write_json('transforms_test.json', frames_test)
+    write_json('transforms_video.json', frames_video)
 

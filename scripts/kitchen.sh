@@ -1,5 +1,6 @@
 #! /bin/bash
 
+datatype="mip360"
 name="nerf_kitchen"
 bound=2 
 scale=0.12 
@@ -19,6 +20,11 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;    
+    -v|--video)
+      video=True
+      shift # past argument
+      shift # past value
+      ;;
     -g|--gui)
       gui=True
       shift # past argument
@@ -34,6 +40,8 @@ done
 
 if [ $gui ]; then
     test_mode='--test --gui'
+elif [ $video ]; then
+    test_mode='--test --video'
 elif [ $test ]; then
     test_mode='--test'
 else
@@ -82,6 +90,7 @@ elif [[ $model == 'palette' ]]; then
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --datatype ${datatype} \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

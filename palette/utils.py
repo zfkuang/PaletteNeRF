@@ -104,7 +104,8 @@ def palette_extraction(
     output_dir: str,
     tau: float = 8e-3,
     palette_size = None,
-    use_normalize = False
+    use_normalize = False,
+    error_thres = 5.0 / 255.0
 ):
     assert palette_size is None or palette_size >= 4 ## convex hull should have at least 4 vertices
     print(f'extracting palette with {palette_size} colors')
@@ -161,7 +162,7 @@ def palette_extraction(
     palette_rgb = Hull_Simplification_posternerf(
         centers.astype(np.double), output_prefix,
         pixel_counts=center_weights,
-        error_thres=5.0/255.0,
+        error_thres=error_thres,
         target_size=palette_size)
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
     if use_normalize:
@@ -471,7 +472,12 @@ class PaletteTrainer(object):
             smooth_loss = pred_smooth_norm.mean()
         else:
             smooth_loss = 0
-
+        if self.opt.lambda_patchsmooth > 0 and self.opt.patch_size > 1:
+            pred_smooth_patch_norm = outputs['smooth_patch_norm']
+            smooth_patch_loss = pred_smooth_patch_norm.mean()
+        else:
+            smooth_patch_loss = 0
+            
         palette_loss = ((self.model.basis_color - self.model.basis_color_origin)**2).sum(dim=-1).mean()
 
         loss_dict['loss_sparsity'] = self.opt.lambda_sparsity * sparsity_loss
@@ -485,6 +491,9 @@ class PaletteTrainer(object):
 
         loss_dict['loss_smooth'] =  self.opt.lambda_smooth * smooth_loss
         loss += loss_dict['loss_smooth']
+        
+        loss_dict['loss_patchsmooth'] =  self.opt.lambda_patchsmooth * smooth_patch_loss
+        loss += loss_dict['loss_patchsmooth']
 
         loss_dict['loss_palette'] = self.lambda_palette * palette_loss
         loss += loss_dict['loss_palette']
@@ -863,13 +872,13 @@ class PaletteTrainer(object):
 
         outputs['preds'] = outputs['image']
         outputs['preds_depth'] = outputs['depth']
-        outputs['preds_xyz'] = data['rays_o'] + data['rays_d'] * outputs['depth'][...,None]
+        outputs['preds_xyz'] = data['rays_o'] + data['rays_d'] * outputs['depth_origin'][...,None]
         if 'weights_sum' in outputs.keys():
             outputs['preds_weight'] = outputs['weights_sum']
 
         return outputs 
 
-    def test(self, loader, save_path=None, name=None, write_video=True):
+    def test(self, loader, save_path=None, name=None, write_video=True, selected_idx=None):
 
         if save_path is None:
             save_path = os.path.join(self.workspace, 'results')
@@ -895,9 +904,10 @@ class PaletteTrainer(object):
         with torch.no_grad():
 
             for i, data in enumerate(loader):
-                
+                if selected_idx is not None and i != selected_idx:
+                    continue
                 H, W = data['H'], data['W']
-                with torch.cuda.amp.autocast(enabled=self.fp16):
+                with torch.cuda.amp.autocamst(enabled=self.fp16):
                     outputs = self.test_step(data)
 
 
@@ -912,77 +922,84 @@ class PaletteTrainer(object):
                 pred_depth = outputs['preds_depth'][0].reshape(H, W).detach().cpu().numpy()
                 pred_depth = (pred_depth * 255).astype(np.uint8)
                 
-                pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
-                pred_basis_dir_color = pred_basis_dir_color.detach().cpu().numpy()
-                pred_basis_dir_color = (pred_basis_dir_color.clip(0, 1) * 255).astype(np.uint8)
+                if not self.opt.gui:
+                    pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
+                    pred_basis_dir_color = pred_basis_dir_color.detach().cpu().numpy()
+                    pred_basis_dir_color = (pred_basis_dir_color.clip(0, 1) * 255).astype(np.uint8)
 
-                pred_basis_img = []
-                pred_basis_acc = []
-                pred_basis_color = []
+                    pred_basis_img = []
+                    pred_basis_acc = []
+                    pred_basis_color = []
 
-                for i in range(self.opt.num_basis):
-                    basis_img = outputs['basis_rgb'][0,:,i*3:(i+1)*3].reshape(H, W, 3)
-                    pred_basis_img.append(basis_img.detach().cpu().numpy())                        
-                    basis_acc = outputs['basis_acc'][0,:,i:(i+1)].reshape(H, W)
-                    pred_basis_acc.append(basis_acc.detach().cpu().numpy())
-                    basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
-                    basis_color = basis_color.clamp(0, 1)
-                    # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
-                    pred_basis_color.append(basis_color.detach().cpu().numpy())
+                    for i in range(self.opt.num_basis):
+                        basis_img = outputs['basis_rgb'][0,:,i*3:(i+1)*3].reshape(H, W, 3)
+                        pred_basis_img.append(basis_img.detach().cpu().numpy())                        
+                        basis_acc = outputs['basis_acc'][0,:,i:(i+1)].reshape(H, W)
+                        pred_basis_acc.append(basis_acc.detach().cpu().numpy())
+                        basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
+                        basis_color = basis_color.clamp(0, 1)
+                        # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
+                        pred_basis_color.append(basis_color.detach().cpu().numpy())
 
-                pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
-                pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
-                pred_basis_color = (np.concatenate(pred_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
+                    pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
+                    pred_basis_acc = (np.concatenate(pred_basis_acc, axis=1).clip(0,1)*255).astype(np.uint8)
+                    pred_basis_color = (np.concatenate(pred_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
+
+                    if write_video:
+                        all_preds_basis_img.append(pred_basis_img)
+                        all_preds_basis_acc.append(pred_basis_acc)
+                        all_preds_basis_color.append(pred_basis_color)
+                        all_preds_dir_color.append(pred_basis_dir_color)
+
+                    else:
+                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_img.png'), pred_basis_img)
+                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_acc.png'), pred_basis_acc)
+                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_color.png'), pred_basis_color)
+                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_dir_color.png'), all_preds_dir_color)
 
                 if write_video:
                     all_preds.append(pred)
                     all_preds_depth.append(pred_depth)
-                    all_preds_basis_img.append(pred_basis_img)
-                    all_preds_basis_acc.append(pred_basis_acc)
-                    all_preds_basis_color.append(pred_basis_color)
-                    all_preds_dir_color.append(pred_basis_dir_color)
-
                 else:
                     cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_rgb.png'), cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
                     cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_depth.png'), pred_depth)
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_img.png'), pred_basis_img)
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_acc.png'), pred_basis_acc)
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_color.png'), pred_basis_color)
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_dir_color.png'), all_preds_dir_color)
 
                 pbar.update(loader.batch_size)
         
         if write_video:
             all_preds = np.stack(all_preds, axis=0)
             all_preds_depth = np.stack(all_preds_depth, axis=0)
-            all_preds_basis_img = np.stack(all_preds_basis_img, axis=0)
-            all_preds_basis_acc = np.stack(all_preds_basis_acc, axis=0)
-            all_preds_basis_color = np.stack(all_preds_basis_color, axis=0)
-            all_preds_dir_color = np.stack(all_preds_dir_color, axis=0)
-
-            _, W_img = all_preds_basis_img.shape[1:3]
-            W_img = W_img//self.opt.num_basis
-            _, W_p = all_preds_basis_color.shape[1:3]
-            W_p = W_p//self.opt.num_basis
 
             def mwrite(filename, frames):
                 frames = frames[:, :frames.shape[1]//2*2, :frames.shape[2]//2*2]
                 imageio.mimwrite(filename, frames, fps=25, quality=8, macro_block_size=1)
             mwrite(os.path.join(save_path, f'{name}_rgb.mp4'), all_preds)
             mwrite(os.path.join(save_path, f'{name}_depth.mp4'), all_preds_depth)
-            mwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img)
-            mwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc)
-            mwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color)
-            mwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color)
-            for i in range(self.opt.num_basis):
-                mwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)])
-                mwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)])
-                mwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)])
+
+            if not self.opt.gui:
+                all_preds_basis_img = np.stack(all_preds_basis_img, axis=0)
+                all_preds_basis_acc = np.stack(all_preds_basis_acc, axis=0)
+                all_preds_basis_color = np.stack(all_preds_basis_color, axis=0)
+                all_preds_dir_color = np.stack(all_preds_dir_color, axis=0)
+
+                _, W_img = all_preds_basis_img.shape[1:3]
+                W_img = W_img//self.opt.num_basis
+                _, W_p = all_preds_basis_color.shape[1:3]
+                W_p = W_p//self.opt.num_basis
+
+                mwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img)
+                mwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc)
+                mwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color)
+                mwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color)
+                for i in range(self.opt.num_basis):
+                    mwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)])
+                    mwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)])
+                    mwrite(os.path.join(save_path, '%s_basis_%02d_color.mp4'%(name, i)), all_preds_basis_color[:, :, W_p*i:W_p*(i+1)])
 
         self.log(f"==> Finished Test.")
 
     # [GUI] test on a single image
-    def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1):
+    def test_gui(self, pose, intrinsics, W, H, bg_color=None, spp=1, downscale=1, gui_mode=True):
         
         # render resolution (may need downscale to for better frame rate)
         rH = int(H * downscale)
@@ -1004,7 +1021,7 @@ class PaletteTrainer(object):
         with torch.no_grad():
             with torch.cuda.amp.autocast(enabled=self.fp16):
                 # here spp is used as perturb random seed! (but not perturb the first sample)
-                output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp, gui_mode=True)
+                output_dict = self.test_step(data, bg_color=bg_color, perturb=False if spp == 1 else spp, gui_mode=gui_mode)
         preds = output_dict['preds'].reshape(-1, rH, rW, 3).clamp(0, 1)
         preds_depth = output_dict['preds_depth'].reshape(-1, rH, rW)
         pred_xyz = output_dict['preds_xyz'].reshape(-1, rH, rW, 3)
@@ -1118,7 +1135,7 @@ class PaletteTrainer(object):
             colors_norm = torch.cat(all_preds_norm, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors_norm, "xyzs":xyzs}
-            palette_extraction(input_dict, save_path.replace("version", "normalized_version"), use_normalize=True)
+            palette_extraction(input_dict, save_path.replace("version", "normalized_version"), use_normalize=True, error_thres=self.opt.error_thres)
 
     def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
 

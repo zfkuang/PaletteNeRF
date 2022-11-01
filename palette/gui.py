@@ -1,11 +1,13 @@
+from configparser import Interpolation
 import math
 import torch
+import torch.optim as optim
 import numpy as np
 import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
 from nerf.utils import *
-from .renderer import RegionEdit
+from .renderer import RegionEdit, Stylizer
 
 
 class OrbitCamera:
@@ -54,7 +56,7 @@ class OrbitCamera:
     
 
 class PaletteGUI:
-    def __init__(self, opt, trainer, palette, hist_weights, train_loader=None, debug=True):
+    def __init__(self, opt, trainer, palette, hist_weights, train_loader=None, video_loader=None, debug=True):
         self.opt = opt # shared with the trainer's opt to support in-place modification of rendering parameters.
         self.W = opt.W
         self.H = opt.H
@@ -66,12 +68,13 @@ class PaletteGUI:
 
         self.trainer = trainer
         self.train_loader = train_loader
+        self.video_loader = video_loader
         if train_loader is not None:
             self.trainer.error_map = train_loader._data.error_map
 
         self.render_buffer = np.zeros((self.W, self.H, 3), dtype=np.float32)
         self.selected_point = None
-        self.selected_pixel = None
+        self.selected_pixel = None 
         self.need_update = True # camera moved, should reset accumulation
         self.spp = 1 # sample per pixel
         self.mode = 'image' # choose from ['image', 'depth']
@@ -79,6 +82,18 @@ class PaletteGUI:
         self.dynamic_resolution = True
         self.downscale = 1
         self.train_steps = 16
+        
+        self.stylize = False
+        self.need_optimize_stylize = False
+        self.cached_stylizer = None
+        self.lambda_ARAP = 0.1
+        self.style_point_list = []
+        self.style_color_list = []
+        self.style_pixel = None
+        self.style_image = np.zeros((400, 400, 3), dtype=np.float32)
+        self.drawed_style_image = self.style_image
+        self.style_W = 0
+        self.style_H = 0
 
         self.trainer.model.edit = RegionEdit(opt)
         self.load_palette()
@@ -131,12 +146,54 @@ class PaletteGUI:
 
     def test_step(self):
         # TODO: seems we have to move data from GPU --> CPU --> GPU?
+        
+        # Optimize for stylization
+        if self.need_optimize_stylize and len(self.style_point_list) > 0:
+            xyzs = torch.stack(self.style_point_list, dim=0)
+            gt_rgbs = torch.from_numpy(np.stack(self.style_color_list, axis=0)).type_as(xyzs)
+            dirs = torch.zeros_like(xyzs)
+            M = xyzs.shape[0]
+            
+            with torch.no_grad():
+                _, _, d_color, omega, _, diffuse = self.trainer.model(xyzs, dirs)
+                radiance = d_color[...,-1:]
+                d_color = d_color[...,:-1]
+                radiance = radiance.reshape(M, 1, 1)
+                d_color = d_color.reshape(M, self.opt.num_basis, 3)
+                omega = omega.reshape(M, self.opt.num_basis, 1)
+                diffuse = diffuse.reshape(M, 3)
+                basis_color = self.trainer.model.basis_color[None,:,:].clamp(0, 1)
+            
+            total_iters = 1000
+            stylizer = Stylizer(self.opt).to(xyzs.device)
+            style_optimizer = optim.SGD(stylizer.parameters(), lr=0.01) 
+            style_scheduler = optim.lr_scheduler.LambdaLR(style_optimizer, lambda iter: 0.1 ** min(iter /total_iters, 1))
+            loss = 0 
+            
+            pbar = tqdm.trange(total_iters)
+            for i in pbar:
+                style_optimizer.zero_grad()
+                rgbs = stylizer(radiance, omega, basis_color, d_color)
+                loss = ((rgbs-gt_rgbs)**2).sum()
+                loss_ARAP = stylizer.ARAP_loss() * self.lambda_ARAP
+                loss += loss_ARAP 
+                loss.backward()
+                style_optimizer.step()
+                style_scheduler.step()
+                pbar.set_description(f"Optimizing Stlization, Loss={loss:.3f}")
+            
+            self.cached_stylizer = stylizer
+            if self.stylize:
+                self.trainer.model.stylizer = self.cached_stylizer
+            self.need_optimize_stylize = False
+            self.need_update = True
+        
         max_spp = self.opt.max_spp if self.dynamic_resolution else 1
         if self.need_update or self.spp < max_spp:
         
             starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
             starter.record()
-            outputs = self.trainer.test_gui(self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, self.spp, self.downscale)
+            outputs = self.trainer.test_gui(self.cam.pose, self.cam.intrinsics, self.W, self.H, self.bg_color, self.spp, self.downscale, gui_mode=True)
 
             ender.record()
             torch.cuda.synchronize()
@@ -184,14 +241,24 @@ class PaletteGUI:
             dpg.set_value("_log_resolution", f'{int(self.downscale * self.W)}x{int(self.downscale * self.H)}')
             dpg.set_value("_log_spp", self.spp)
             dpg.set_value("_texture", self.render_buffer)
-
-        
+            
+        dpg.set_value("_style_texture", self.drawed_style_image)
+            
+        selected_point = self.selected_point
+        if selected_point is not None:
+            selected_point = selected_point.detach().cpu().numpy()
+        dpg.set_value("_img_point", "Image Point: " + str(selected_point))
+        dpg.set_value("_style_pixel", "Style Pixel: " + str(self.style_pixel))
+            
     def register_dpg(self):
 
         ### register texture 
 
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(self.W, self.H, self.render_buffer, format=dpg.mvFormat_Float_rgb, tag="_texture")
+            
+        with dpg.texture_registry(show=False):
+            dpg.add_raw_texture(400, 400, self.drawed_style_image, format=dpg.mvFormat_Float_rgb, tag="_style_texture")
 
         ### register window
 
@@ -324,7 +391,22 @@ class PaletteGUI:
 
                 dpg.add_color_edit((255, 255, 255), label="Background Color", width=200, tag="_color_editor", no_alpha=True, callback=callback_change_bg)
                 
+                with dpg.group(horizontal=True):
+                    def callback_renderview(sender, app_data):
+                        self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id) # test and save video
+
+                    dpg.add_button(label="render view", tag="_button_render_view", callback=callback_renderview)
+                    dpg.bind_item_theme("_button_render_view", theme_button)
+
+                    if self.video_loader is not None:
+                        def callback_rendervideo(sender, app_data):
+                            self.trainer.test(self.video_loader, save_path="./results_gui", write_video=True) # test and save video
+
+                        dpg.add_button(label="render video", tag="_button_render_video", callback=callback_rendervideo)
+                        dpg.bind_item_theme("_button_render_video", theme_button)
+                    
                 def callback_set_testcam(sender, app_data):
+                    self.test_cam_id = app_data-1
                     test_pose = self.train_loader._data.poses[app_data-1].detach().cpu().numpy()
                     self.cam.rot = R.from_matrix(test_pose[:3, :3])
                     self.cam.radius = 2
@@ -450,7 +532,96 @@ class PaletteGUI:
                 highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
                 dpg.add_color_edit(tuple(highlight_color), label="Palette Color", width=200, tag="_palette_color_editor", 
                                     no_alpha=True, callback=callback_change_palette)
+                
+                def callback_save_palette(sender, app_data):
+                    pred_basis_color = []
 
+                    for i in range(self.opt.num_basis):
+                        basis_color = self.palette[i,None,None,:].repeat(100, 100, 1)
+                        basis_color = basis_color.clamp(0, 1)
+                        pred_basis_color.append(basis_color.detach().cpu().numpy())
+
+                    pred_basis_color = (np.concatenate(pred_basis_color, axis=1).clip(0,1)*255).astype(np.uint8)
+
+                    cv2.imwrite(os.path.join("./results_gui", f'basis_color.png'), pred_basis_color[...,[2,1,0]])
+
+                dpg.add_button(label="save_palette", tag="_button_save_palette", callback=callback_save_palette)
+                dpg.bind_item_theme("_button_save_palette", theme_button)
+
+            with dpg.collapsing_header(label="Stylization", default_open=True):                       
+                def callback_select_style_image(sender, app_data):
+                    filepath = app_data['selections'][list(app_data['selections'].keys())[0]]
+                    image = imageio.imread(filepath)[:,:,:3]
+                    print(image.shape)
+                    self.style_image = cv2.resize(image, (400, 400), interpolation=cv2.INTER_LINEAR)
+                    self.style_image = (self.style_image/255.0).clip(0, 1).astype(np.float32)
+                    print(self.style_image.shape)
+                    print(self.style_image.sum())
+                    self.drawed_style_image = self.style_image
+                    # dpg.set_value("_style_texture", self.style_image)
+                    # self.style_W = self.style_image.shape[1] // 8
+                    # self.style_H = self.style_image.shape[0] // 8
+                  
+                with dpg.file_dialog(directory_selector=False, show=False, width=400, height=300, default_path="/home/zhengfei/cvpr2023/experiments/2_stylization/images", callback=callback_select_style_image, tag="file_dialog_id"):
+                    dpg.add_file_extension("", color=(255, 150, 150, 255))
+                    dpg.add_file_extension(".*")
+                    dpg.add_file_extension(".jpg", color=(255, 0, 255, 255), custom_text="[jpg]")
+                    dpg.add_file_extension(".jpeg", color=(255, 0, 255, 255), custom_text="[jpeg]")
+                    dpg.add_file_extension(".png", color=(255, 0, 255, 255), custom_text="[png]")
+
+                dpg.add_button(label="select style image", tag="_button_select_style_image", callback=lambda: dpg.show_item("file_dialog_id"))
+                dpg.bind_item_theme("_button_select_style_image", theme_button)
+                       
+                def callback_delete_correspondence(sender, app_data):
+                    idx = int(sender.split("_")[-1])
+                    self.style_color_list.pop(idx)
+                    self.style_point_list.pop(idx)
+                    update_correspondence_list()
+                    
+                def update_correspondence_list():
+                    dpg.delete_item("_correspondence_list", children_only=True)
+                    for i in range(len(self.style_color_list)):
+                        dpg.add_text(f"Point: {self.style_point_list[i]}", parent="_correspondence_list")
+                        dpg.add_text(f"Color: {self.style_color_list[i]}", parent="_correspondence_list")
+                        dpg.add_button(label=f"Delete", parent="_correspondence_list", tag=f"_corr_delete_{i}", callback=callback_delete_correspondence)
+                        dpg.bind_item_theme(f"_corr_delete_{i}", theme_button)
+                        
+                with dpg.group(horizontal=True):                    
+                    
+                    def callback_add_correspondence(sender, app_data):
+                        assert(self.selected_point is not None and self.style_pixel is not None)
+                        self.style_color_list.append(self.style_image[self.style_pixel[1], self.style_pixel[0]])
+                        self.style_point_list.append(self.selected_point)
+                        update_correspondence_list()
+                    
+                    def callback_stylize(sender, app_data):
+                            if self.stylize:
+                                self.stylize = False
+                                self.trainer.model.stylizer = None
+                                self.need_update = True
+                                dpg.configure_item("_button_stylize", label="stylize")
+                            else:
+                                self.stylize = True
+                                self.trainer.model.stylizer = self.cached_stylizer
+                                self.need_update = True
+                                dpg.configure_item("_button_stylize", label="unstylize")
+                                
+                    def callback_optimize_stylize(sender, app_data):
+                        self.need_optimize_stylize = True
+
+                    dpg.add_button(label="add correspondence", tag="_button_add_corr", callback=callback_add_correspondence)
+                    dpg.bind_item_theme("_button_add_corr", theme_button)
+                    
+                    dpg.add_button(label="stylize", tag="_button_stylize", callback=callback_stylize)
+                    dpg.bind_item_theme("_button_stylize", theme_button)
+                    
+                    dpg.add_button(label="optimize", tag="_button_optimize_stylize", callback=callback_optimize_stylize)
+                    dpg.bind_item_theme("_button_optimize_stylize", theme_button)
+
+
+                dpg.add_text("", tag="_img_point")
+                dpg.add_text("", tag="_style_pixel")
+        
             # debug info
             if self.debug:
                 with dpg.collapsing_header(label="Debug"):
@@ -458,7 +629,13 @@ class PaletteGUI:
                     dpg.add_separator()
                     dpg.add_text("Camera Pose:")
                     dpg.add_text(str(self.cam.pose), tag="_log_pose")
+                    
+        with dpg.window(tag="_style_window", width=400, height=self.H, pos=(self.W+400, 0)):
+            # add the texture
+            dpg.add_image("_style_texture")
 
+            with dpg.collapsing_header(label="Correspondence List", default_open=True, tag="_correspondence_list"):
+                pass
 
         ### register camera handler
 
@@ -507,25 +684,34 @@ class PaletteGUI:
 
         def callback_select_point(sender, app_data):
 
-            if not dpg.is_item_focused("_primary_window"):
+            if not dpg.is_item_focused("_primary_window") and not dpg.is_item_focused("_style_window"):
                 return
+            style_img = dpg.is_item_focused("_style_window")
             x, y = dpg.get_mouse_pos()
             x = int(x)
             y = int(y)
-            print("Selecting pixel: [%d, %d]"%(x, y))
-            self.selected_pixel = [x,y]
-            self.selected_point = None
+            if not style_img:
+                if x > 0 and y > 0 and x < self.W and y < self.H:
+                    self.selected_pixel = [x,y]
+                    self.selected_point = None
+            else:
+                if x > 0 and y > 0 and x < 400 and y < 400:
+                    self.style_pixel = [x,y]
+                    self.drawed_style_image = cv2.circle(self.style_image.copy(), self.style_pixel, 5, (255, 0, 0), -1)
+                        
             self.need_update = True
-
+                
             if self.debug:
                 dpg.set_value("_log_pose", str(self.cam.pose))
-
+                
         def callback_clear_point(sender, app_data):
 
             if not dpg.is_item_focused("_primary_window"):
                 return
+            print("Unselecting point")
             self.selected_point = None
             self.selected_pixel = None
+            self.style_pixel = None
             self.need_update = True
 
             if self.debug:
@@ -539,7 +725,7 @@ class PaletteGUI:
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)
 
 
-        dpg.create_viewport(title='torch-ngp', width=self.W+400, height=self.H, resizable=False)
+        dpg.create_viewport(title='torch-ngp', width=self.W+400+400, height=self.H, resizable=False)
         
         # TODO: seems dearpygui doesn't support resizing texture...
         # def callback_resize(sender, app_data):
@@ -558,6 +744,7 @@ class PaletteGUI:
                 dpg.add_theme_style(dpg.mvStyleVar_CellPadding, 0, 0, category=dpg.mvThemeCat_Core)
         
         dpg.bind_item_theme("_primary_window", theme_no_padding)
+        dpg.bind_item_theme("_style_window", theme_no_padding)
 
         dpg.setup_dearpygui()
 

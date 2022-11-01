@@ -1,16 +1,15 @@
 #! /bin/bash
 
-datatype="mip360"
-name="nerf_room"
-bound=2 
-scale=0.13 
+datatype="blender"
+name="nerf_materials"
+bound=2
+scale=0.8
 bg_radius=0
-offset='0 0 -0.5'
 density_thresh=10
-lambda_sparse=0.00
-iters=90000
-min_near=0.05
-data_dir='../data/mip360/room'
+iters=30000
+lambda_sparse=0.05
+offset='0 0 0'
+data_dir="../data/nerf_synthetic/materials"
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -58,10 +57,8 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --lambda_sparse ${lambda_sparse} \
-    --min_near ${min_near} \
-    --no_bg \
     -O \
+    --dt_gamma 0 \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -71,9 +68,8 @@ elif [[ $model == 'extract' ]]; then
     --bound ${bound} \
     --scale ${scale} \
     --bg_radius ${bg_radius} \
-    --density_thresh ${density_thresh}  \
-    --min_near ${min_near} \
-    --extract_palette
+    --density_thresh ${density_thresh} \
+    $dt_gamma
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
     $data_dir \
@@ -82,14 +78,13 @@ elif [[ $model == 'palette' ]]; then
     --iters ${iters} \
     --bound ${bound} \
     --scale ${scale} \
-    --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --min_near ${min_near} \
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --dt_gamma 0 \
     --datatype ${datatype} \
     $test_mode
 else

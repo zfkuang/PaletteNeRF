@@ -1,9 +1,10 @@
 #! /bin/bash
 
+datatype="llff"
 name="nerf_flower"
 bound=2
 scale=0.02
-bg_radius=4
+bg_radius=0
 offset='0 0 1.5'
 density_thresh=10
 lambda_sparse=0.05
@@ -19,6 +20,11 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;    
+    -v|--video)
+      video=True
+      shift # past argument
+      shift # past value
+      ;;
     -g|--gui)
       gui=True
       shift # past argument
@@ -34,6 +40,8 @@ done
 
 if [ $gui ]; then
     test_mode='--test --gui'
+elif [ $video ]; then
+    test_mode='--test --video'
 elif [ $test ]; then
     test_mode='--test'
 else
@@ -51,6 +59,7 @@ if [[ $model == 'nerf' ]]; then
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
     --min_near ${min_near} \
+    --no_bg \
     -O \
     $test_mode
 elif [[ $model == 'extract' ]]; then
@@ -80,6 +89,7 @@ elif [[ $model == 'palette' ]]; then
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --datatype ${datatype} \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

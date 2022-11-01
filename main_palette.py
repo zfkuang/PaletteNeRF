@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('nerf_path', type=str)
     parser.add_argument('-O', action='store_true', help="equals --fp16 --cuda_ray --preload")
     parser.add_argument('--test', action='store_true', help="test mode")
+    parser.add_argument('--video', action='store_true', help="video mode")
     parser.add_argument('--seed', type=int, default=0)
 
     ### training options
@@ -47,6 +48,7 @@ if __name__ == '__main__':
     parser.add_argument('--min_near', type=float, default=0.2, help="minimum near distance for camera")
     parser.add_argument('--density_thresh', type=float, default=10, help="threshold for density grid to be occupied")
     parser.add_argument('--bg_radius', type=float, default=-1, help="if positive, use a background model at sphere(bg_radius)")
+    parser.add_argument('--datatype', type=str, choices=['llff', 'blender', 'mip360'], help="Type of dataset (used for testing views generation)")
 
     ### GUI options
     parser.add_argument('--gui', action='store_true', help="start a GUI")
@@ -63,6 +65,7 @@ if __name__ == '__main__':
 
     ### Palette 
     parser.add_argument('--extract_palette', action='store_true', help="extract palette")
+    parser.add_argument('--error_thres', type=float, default=5.0/255, help='error threshold for palette extraction')
     parser.add_argument('--update_grid', action='store_true', help="update density grid")
     parser.add_argument("--num_basis", type=int, default=12, help='number of basis')
     parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
@@ -73,17 +76,28 @@ if __name__ == '__main__':
     parser.add_argument('--separate_radiance', action='store_true', help="use radiance from a separated output")
     parser.add_argument('--continue_training', action='store_true', help="continue training")
     parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
+    
+    # parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
+    # parser.add_argument("--lambda_smooth", type=float, default=2e-3, help='weight of smooth loss')
+    # parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
+    # parser.add_argument("--lambda_delta", type=float, default=0.04, help='weight of delta color loss')
+    # parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
+    # parser.add_argument("--lambda_palette", type=float, default=0.005, help='weight of weight loss')
+    # parser.add_argument("--smooth_epoch", type=int, default=100, help='number of maximum epoch before add smooth loss')
+    
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
-    parser.add_argument("--lambda_smooth", type=float, default=2e-3, help='weight of smooth loss')
+    parser.add_argument("--lambda_smooth", type=float, default=4e-3, help='weight of smooth loss')
+    parser.add_argument("--lambda_patchsmooth", type=float, default=2e-3, help='weight of smooth loss')
     parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.04, help='weight of delta color loss')
-    parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
-    parser.add_argument("--lambda_palette", type=float, default=0.005, help='weight of weight loss')
+    parser.add_argument("--lambda_delta", type=float, default=0.03, help='weight of delta color loss')
+    parser.add_argument("--lambda_weight", type=float, default=0.05, help='weight of weight loss')
+    parser.add_argument("--lambda_palette", type=float, default=0.001, help='weight of weight loss')
+    parser.add_argument("--smooth_epoch", type=int, default=30, help='number of maximum epoch before add smooth loss')
+    
     parser.add_argument("--sigma_clip", type=float, default=0, help='sigma of clip feature (used in smooth loss)')
     parser.add_argument("--sigma_color", type=float, default=1, help='sigma of color (used in smooth loss)')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
-    parser.add_argument("--smooth_epoch", type=int, default=100, help='number of maximum epoch before add smooth loss')
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
@@ -166,13 +180,21 @@ if __name__ == '__main__':
                                 use_checkpoint=opt.ckpt, nerf_path=None)
         if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
-            test_loader = NeRFDataset(opt, device=device, type='train').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
+            try:
+                video_loader = NeRFDataset(opt, device=device, type='video').dataloader()
+            except: 
+                print("Loading video poses failed. Skipped.")
+                video_loader = None
             palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
             hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
             opt.H = test_loader._data.H
             opt.W = test_loader._data.W
-            gui = PaletteGUI(opt, trainer, palette, hist_weights, train_loader=test_loader)
+            gui = PaletteGUI(opt, trainer, palette, hist_weights, train_loader=test_loader, video_loader=video_loader)
             gui.render()
+        elif opt.video:
+            test_loader = NeRFDataset(opt, device=device, type='video').dataloader()
+            trainer.test(test_loader, write_video=True) # test and save video
         else:
             test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()
 

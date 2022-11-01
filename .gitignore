@@ -14,6 +14,7 @@ tensorf/
 **tensorf*
 results/
 results_palette/
+results_gui/
 not_used/
 **dnerf*
 dnerf/

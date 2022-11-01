@@ -128,7 +128,7 @@ if __name__ == '__main__':
         trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
         if opt.gui:
-            test_loader = NeRFDataset(opt, device=device, type='train').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
             opt.H = test_loader._data.H
             opt.W = test_loader._data.W
             gui = NeRFGUI(opt, trainer, test_loader)

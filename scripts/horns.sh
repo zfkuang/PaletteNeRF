@@ -1,5 +1,6 @@
 #! /bin/bash
 
+datatype="llff"
 name="nerf_horns"
 bound=2
 scale=0.16
@@ -19,6 +20,11 @@ while [[ $# -gt 0 ]]; do
       shift # past argument
       shift # past value
       ;;    
+    -v|--video)
+      video=True
+      shift # past argument
+      shift # past value
+      ;;
     -g|--gui)
       gui=True
       shift # past argument
@@ -34,6 +40,8 @@ done
 
 if [ $gui ]; then
     test_mode='--test --gui'
+elif [ $video ]; then
+    test_mode='--test --video'
 elif [ $test ]; then
     test_mode='--test'
 else
@@ -53,7 +61,6 @@ if [[ $model == 'nerf' ]]; then
     --min_near ${min_near} \
     -O \
     --no_bg \
-    --error_map \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -82,6 +89,7 @@ elif [[ $model == 'palette' ]]; then
     --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
+    --datatype ${datatype} \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

@@ -1,16 +1,16 @@
 #! /bin/bash
 
-datatype="mip360"
-name="nerf_room"
-bound=2 
-scale=0.13 
+datatype="blender"
+name="nerf_barn"
+bound=2
+scale=0.5
 bg_radius=0
-offset='0 0 -0.5'
+offset='0 0 0'
 density_thresh=10
-lambda_sparse=0.00
+lambda_sparse=0.02
 iters=90000
-min_near=0.05
-data_dir='../data/mip360/room'
+min_near=0.2
+data_dir="../data/TanksAndTemple/Barn"
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -60,8 +60,9 @@ if [[ $model == 'nerf' ]]; then
     --density_thresh ${density_thresh} \
     --lambda_sparse ${lambda_sparse} \
     --min_near ${min_near} \
-    --no_bg \
+    --dt_gamma 0 \
     -O \
+    --filter_camera_point \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \

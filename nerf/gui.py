@@ -293,6 +293,7 @@ class NeRFGUI:
                 
                 # set test cam
                 def callback_set_testcam(sender, app_data):
+                    self.test_cam_id = app_data-1
                     test_pose = self.train_loader._data.poses[app_data-1].detach().cpu().numpy()
                     self.cam.rot = R.from_matrix(test_pose[:3, :3])
                     self.cam.radius = 2
@@ -319,6 +320,12 @@ class NeRFGUI:
                     self.need_update = True
                 dpg.add_slider_int(label="test_pose", min_value=1, max_value=len(self.train_loader._data.poses), format="%d", default_value=0, callback=callback_set_testcam)
 
+                def callback_renderview(sender, app_data):
+                    self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id) # test and save video
+
+                dpg.add_button(label="render view", tag="_button_render_view", callback=callback_renderview)
+                dpg.bind_item_theme("_button_render_view", theme_button)
+                
                 # fov slider
                 def callback_set_fovy(sender, app_data):
                     self.cam.fovy = app_data

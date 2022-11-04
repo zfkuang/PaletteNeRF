@@ -8,6 +8,7 @@ bg_radius=0
 density_thresh=10
 iters=30000
 offset='0 0 0'
+random_size=0
 data_dir="../data/nerf_synthetic/ship"
 nerf_model=./results/${name}/version_1
 
@@ -115,6 +116,7 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \

@@ -293,6 +293,7 @@ class PaletteTrainer(object):
         self.device = device if device is not None else torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
         self.console = Console()
         self.val_len = 10
+        self.require_smooth_loss = False
 
         model.to(self.device)
         if self.world_size > 1:
@@ -444,16 +445,63 @@ class PaletteTrainer(object):
             loss_clip_feat = self.criterion(pred_clip_feat, gt_clip_feat).mean()
 
         # patch-based rendering
-        if self.opt.patch_size > 1:
-            gt_rgb = gt_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
-            pred_rgb = pred_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
+        # smooth_patch_loss = 0
+        # if self.opt.patch_size > 1 and self.require_smooth_loss == True:
+        #     diffuse_patch = outputs['diffuse_rgb'].view(-1, self.opt.patch_size, self.opt.patch_size, 3)
+        #     # gt_rgb_patch = gt_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
+        #     # pred_rgb = pred_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
 
-            # torch_vis_2d(gt_rgb[0])
-            # torch_vis_2d(pred_rgb[0])
+        #     # torch_vis_2d(gt_rgb[0])
+        #     # torch_vis_2d(pred_rgb[0])
 
-            # LPIPS loss [not useful...]
-            loss = loss + 1e-3 * self.criterion_lpips(pred_rgb, gt_rgb)
-
+        #     # LPIPS loss [not useful...]
+        #     # loss = loss + 1e-3 * self.criterion_lpips(pred_rgb, gt_rgb)
+        #     if self.opt.lambda_patchsmooth > 0:
+        #         omega_patch = outputs['basis_acc'].reshape(-1, self.opt.patch_size, self.opt.patch_size, self.opt.num_basis)
+        #         pixel_patch = torch.range(0, self.opt.patch_size-1, dtype=torch.float32, device=diffuse_patch.device)
+        #         pixel_patch = torch.stack(torch.meshgrid(pixel_patch, pixel_patch), dim=-1)[None,...] # 1 x pa x pa x 2
+        #         pixel_patch = pixel_patch.repeat(diffuse_patch.shape[0], 1, 1, 1) # M x pa x pa x 2
+                
+        #         diffuse_patch = diffuse_patch.reshape(diffuse_patch.shape[0], -1, 3) 
+        #         omega_patch = omega_patch.reshape(omega_patch.shape[0], -1, self.opt.num_basis) 
+        #         pixel_patch = pixel_patch.reshape(pixel_patch.shape[0], -1, 2) 
+                
+        #         perm = torch.randperm(self.opt.patch_size**2)
+        #         diffuse_diffpatch = diffuse_patch[:, perm]
+        #         omega_diffpatch = omega_patch[:, perm]
+        #         pixel_diffpatch = pixel_patch[:, perm]
+                
+        #         xyzs_weight_patch = (pixel_patch-pixel_diffpatch).norm(dim=-1, keepdim=True)**2 / 1
+        #         rgb_weight_patch = (diffuse_patch-diffuse_diffpatch).norm(dim=-1, keepdim=True)**2 / self.opt.sigma_color # (N_rays, N_samples_, 1)
+                
+        #         smooth_weight_patch = (xyzs_weight_patch + rgb_weight_patch).detach()
+        #         smooth_weight_patch = torch.exp(-smooth_weight_patch)
+        #         smooth_patch_norm = ((omega_patch-omega_diffpatch)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight_patch
+        #         smooth_patch_loss = smooth_patch_norm.mean()         
+          
+        smooth_patch_loss = 0
+        if self.opt.random_size > 0 and self.require_smooth_loss == True and self.opt.lambda_patchsmooth > 0 and 'inds' in data.keys():
+            diffuse = outputs['diffuse_rgb'].reshape(-1, 3) # N x 3
+            omega = outputs['basis_acc'].reshape(-1, self.opt.num_basis, 1) # N x N_p 
+            idx_origin = data['inds']
+            idx = torch.stack([idx_origin//data['W'], idx_origin%data['W']], dim=-1).reshape(-1, 2) # N x 2
+            
+            half_N = N // 2
+            diffuse_diff = diffuse[half_N:]
+            diffuse = diffuse[:half_N]
+            omega_diff = omega[half_N:]
+            omega = omega[:half_N]
+            idx_diff = idx[half_N:].float()
+            idx = idx[:half_N].float()
+            
+            xyzs_weight_patch = (idx-idx_diff).norm(dim=-1, keepdim=True)**2 / 100
+            rgb_weight_patch = (diffuse-diffuse_diff).norm(dim=-1, keepdim=True)**2 / self.opt.sigma_color # (N_rays, N_samples_, 1)
+            
+            smooth_weight_patch = (xyzs_weight_patch + rgb_weight_patch).detach()
+            smooth_weight_patch = torch.exp(-smooth_weight_patch)
+            smooth_patch_norm = ((omega-omega_diff)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight_patch
+            smooth_patch_loss = smooth_patch_norm.mean()        
+                
         loss_dict = {}
         pred_omega = outputs['omega_norm']
         sparsity_loss = pred_omega.mean()
@@ -472,11 +520,6 @@ class PaletteTrainer(object):
             smooth_loss = pred_smooth_norm.mean()
         else:
             smooth_loss = 0
-        if self.opt.lambda_patchsmooth > 0 and self.opt.patch_size > 1:
-            pred_smooth_patch_norm = outputs['smooth_patch_norm']
-            smooth_patch_loss = pred_smooth_patch_norm.mean()
-        else:
-            smooth_patch_loss = 0
             
         palette_loss = ((self.model.basis_color - self.model.basis_color_origin)**2).sum(dim=-1).mean()
 
@@ -602,6 +645,7 @@ class PaletteTrainer(object):
                 self.model.freeze_basis_color = False
                 self.lambda_palette = self.opt.lambda_palette
             if epoch >= self.opt.smooth_epoch:
+                self.require_smooth_loss = True
                 self.model.require_smooth_loss = True
 
         if self.use_tensorboardX and self.local_rank == 0:
@@ -872,13 +916,15 @@ class PaletteTrainer(object):
 
         outputs['preds'] = outputs['image']
         outputs['preds_depth'] = outputs['depth']
+        if 'depth_origin' not in outputs.keys():
+            outputs['depth_origin'] = outputs['depth']
         outputs['preds_xyz'] = data['rays_o'] + data['rays_d'] * outputs['depth_origin'][...,None]
         if 'weights_sum' in outputs.keys():
             outputs['preds_weight'] = outputs['weights_sum']
 
         return outputs 
 
-    def test(self, loader, save_path=None, name=None, write_video=True, selected_idx=None):
+    def test(self, loader, save_path=None, name=None, write_video=True, selected_idx=None, gui_mode=False):
 
         if save_path is None:
             save_path = os.path.join(self.workspace, 'results')
@@ -902,13 +948,13 @@ class PaletteTrainer(object):
             all_preds_dir_color = []
 
         with torch.no_grad():
-
-            for i, data in enumerate(loader):
-                if selected_idx is not None and i != selected_idx:
+ 
+            for t, data in enumerate(loader):
+                if selected_idx is not None and t != selected_idx:
                     continue
                 H, W = data['H'], data['W']
-                with torch.cuda.amp.autocamst(enabled=self.fp16):
-                    outputs = self.test_step(data)
+                with torch.cuda.amp.autocast(enabled=self.fp16):
+                    outputs = self.test_step(data, gui_mode=gui_mode)
 
 
                 pred = outputs['preds'][0].reshape(H, W, 3)
@@ -923,9 +969,9 @@ class PaletteTrainer(object):
                 pred_depth = (pred_depth * 255).astype(np.uint8)
                 
                 if not self.opt.gui:
-                    pred_basis_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
-                    pred_basis_dir_color = pred_basis_dir_color.detach().cpu().numpy()
-                    pred_basis_dir_color = (pred_basis_dir_color.clip(0, 1) * 255).astype(np.uint8)
+                    pred_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
+                    pred_dir_color = pred_dir_color.detach().cpu().numpy()
+                    pred_dir_color = (pred_dir_color.clip(0, 1) * 255).astype(np.uint8)
 
                     pred_basis_img = []
                     pred_basis_acc = []
@@ -949,20 +995,20 @@ class PaletteTrainer(object):
                         all_preds_basis_img.append(pred_basis_img)
                         all_preds_basis_acc.append(pred_basis_acc)
                         all_preds_basis_color.append(pred_basis_color)
-                        all_preds_dir_color.append(pred_basis_dir_color)
+                        all_preds_dir_color.append(pred_dir_color)
 
                     else:
-                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_img.png'), pred_basis_img)
-                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_acc.png'), pred_basis_acc)
-                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_basis_color.png'), pred_basis_color)
-                        cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_dir_color.png'), all_preds_dir_color)
+                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_img.png'), pred_basis_img)
+                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_acc.png'), pred_basis_acc)
+                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_color.png'), pred_basis_color)
+                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_dir_color.png'), pred_dir_color)
 
                 if write_video:
                     all_preds.append(pred)
                     all_preds_depth.append(pred_depth)
                 else:
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_rgb.png'), cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
-                    cv2.imwrite(os.path.join(save_path, f'{name}_{i:04d}_depth.png'), pred_depth)
+                    imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_rgb.png'), pred)
+                    imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_depth.png'), pred_depth)
 
                 pbar.update(loader.batch_size)
         

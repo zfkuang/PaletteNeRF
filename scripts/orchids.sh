@@ -1,16 +1,17 @@
 #! /bin/bash
 
-datatype="blender"
-name="nerf_barn"
+datatype="llff"
+name="nerf_orchids"
 bound=2
-scale=0.5
+scale=0.16
 bg_radius=0
-offset='0 0 0'
+offset='0 0 1.5'
 density_thresh=10
-lambda_sparse=0.02
-iters=90000
-min_near=0.2
-data_dir="../data/TanksAndTemple/Barn"
+lambda_sparse=0.05
+iters=10000
+min_near=0.05
+random_size=0
+data_dir='../data/nerf_llff_data/orchids'
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -58,11 +59,9 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --lambda_sparse ${lambda_sparse} \
     --min_near ${min_near} \
-    --dt_gamma 0 \
     -O \
-    --filter_camera_point \
+    --no_bg \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -72,7 +71,7 @@ elif [[ $model == 'extract' ]]; then
     --bound ${bound} \
     --scale ${scale} \
     --bg_radius ${bg_radius} \
-    --density_thresh ${density_thresh}  \
+    --density_thresh ${density_thresh} \
     --min_near ${min_near} \
     --extract_palette
 elif [[ $model == 'palette' ]]; then
@@ -87,6 +86,7 @@ elif [[ $model == 'palette' ]]; then
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
     --min_near ${min_near} \
+    --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \

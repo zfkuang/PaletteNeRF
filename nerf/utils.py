@@ -50,7 +50,7 @@ def srgb_to_linear(x):
 
 
 @torch.cuda.amp.autocast(enabled=False)
-def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
+def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1, random_size=0):
     ''' get rays
     Args:
         poses: [B, 4, 4], cam2world
@@ -94,7 +94,21 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
             inds = inds[:, 0] * W + inds[:, 1] # [N], flatten
 
             inds = inds.expand([B, N])
-
+        elif random_size > 0:
+            assert(N%2 == 0)
+            num_patch = N // 2
+            inds_x = torch.randint(0, H, size=[num_patch], device=device)
+            inds_y = torch.randint(0, W, size=[num_patch], device=device)
+            inds = torch.stack([inds_x, inds_y], dim=-1) # [np, 2]
+            inds_offset_x = torch.randint(-random_size, random_size, size=[num_patch], device=device)
+            inds_offset_y = torch.randint(-random_size, random_size, size=[num_patch], device=device)
+            inds_diff_x = (inds_x + inds_offset_x).clamp(0, H-1)
+            inds_diff_y = (inds_y + inds_offset_y).clamp(0, W-1)
+            inds_diff = torch.stack([inds_diff_x, inds_diff_y], dim=-1) # [np, 2]
+            inds = torch.cat([inds, inds_diff], dim=0) # [np, 2]
+            
+            inds = inds[:, 0] * W + inds[:, 1] # [N], flatten
+            inds = inds.expand([B, N])
         elif error_map is None:
             inds = torch.randint(0, H*W, size=[N], device=device) # may duplicate
             inds = inds.expand([B, N])
@@ -119,6 +133,7 @@ def get_rays(poses, intrinsics, H, W, N=-1, error_map=None, patch_size=1):
 
     else:
         inds = torch.arange(H*W, device=device).expand([B, H*W])
+        results['inds'] = inds
 
     zs = torch.ones_like(i)
     xs = (i - cx) / fx * zs

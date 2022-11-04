@@ -201,34 +201,37 @@ class NeRFDataset:
                     f_path += '.png' # so silly...
 
                 # there are non-exist paths in fox...
-                if not os.path.exists(f_path):
+                # if not os.path.exists(f_path):
+                #     continue
+                if not os.path.exists(f_path) and type != 'video':
                     continue
                 
                 pose = np.array(f['transform_matrix'], dtype=np.float32) # [4, 4]
                 pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
 
-                image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
-                if image.dtype == np.uint16 and image.max() > 500:
-                    image = (image // 256).astype(np.uint8)
-                if self.H is None or self.W is None:
-                    self.H = image.shape[0] // downscale
-                    self.W = image.shape[1] // downscale
-
-                # add support for the alpha channel as a mask.
-                if image.shape[-1] == 3: 
-                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-                else:
-                    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
-
-                if image.shape[0] != self.H or image.shape[1] != self.W:
-                    image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
-                image = image.astype(np.float32) / 255 # [H, W, 3/4]
-
                 self.poses.append(pose)
-                self.images.append(image)
+                if os.path.exists(f_path):
+                    image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
+                    if image.dtype == np.uint16 and image.max() > 500:
+                        image = (image // 256).astype(np.uint8)
+                    if self.H is None or self.W is None:
+                        self.H = image.shape[0] // downscale
+                        self.W = image.shape[1] // downscale
+
+                    # add support for the alpha channel as a mask.
+                    if image.shape[-1] == 3: 
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    else:
+                        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+
+                    if image.shape[0] != self.H or image.shape[1] != self.W:
+                        image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
+                    image = image.astype(np.float32) / 255 # [H, W, 3/4]
+
+                    self.images.append(image)
             
         self.poses = torch.from_numpy(np.stack(self.poses, axis=0)) # [N, 4, 4]
-        if self.images is not None:
+        if self.images is not None and len(self.images) > 0:
             self.images = torch.from_numpy(np.stack(self.images, axis=0)) # [N, H, W, C]
         
         # calculate mean radius of all camera poses
@@ -249,7 +252,7 @@ class NeRFDataset:
 
         if self.preload:
             self.poses = self.poses.to(self.device)
-            if self.images is not None:
+            if self.images is not None and len(self.images) > 0:
                 # TODO: linear use pow, but pow for half is only available for torch >= 1.10 ?
                 if self.fp16 and self.opt.color_space != 'linear':
                     dtype = torch.half
@@ -312,7 +315,7 @@ class NeRFDataset:
             'rays_d': rays['rays_d'],
         }
 
-        if self.images is not None:
+        if self.images is not None and len(self.images) > 0:
             images = self.images[index].to(self.device) # [B, H, W, 3/4]
             if self.training:
                 C = images.shape[-1]

@@ -372,13 +372,14 @@ class NeRFDataset:
 
         error_map = None if self.error_map is None else self.error_map[index]
         
-        rays = get_rays(poses, self.intrinsics, self.H, self.W, self.num_rays, error_map, self.opt.patch_size)
+        rays = get_rays(poses, self.intrinsics, self.H, self.W, self.num_rays, error_map, self.opt.patch_size, self.opt.random_size)
 
         results = {
             'H': self.H,
             'W': self.W,
             'rays_o': rays['rays_o'],
             'rays_d': rays['rays_d'],
+            'inds': rays['inds'],
         }
 
         if self.images is not None:

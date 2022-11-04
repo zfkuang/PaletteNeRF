@@ -33,6 +33,7 @@ if __name__ == '__main__':
     parser.add_argument('--update_extra_interval', type=int, default=16, help="iter interval to update extra status (only valid when using --cuda_ray)")
     parser.add_argument('--max_ray_batch', type=int, default=4096, help="batch size of rays at inference to avoid OOM (only valid when NOT using --cuda_ray)")
     parser.add_argument('--patch_size', type=int, default=1, help="[experimental] render patches in training, so as to apply LPIPS loss. 1 means disabled, use [64, 32, 16] to enable")
+    parser.add_argument('--random_size', type=int, default=0, help="[experimental] rendom size for image-based smoothing")
 
     ### network backbone options
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
@@ -87,7 +88,7 @@ if __name__ == '__main__':
     
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
     parser.add_argument("--lambda_smooth", type=float, default=4e-3, help='weight of smooth loss')
-    parser.add_argument("--lambda_patchsmooth", type=float, default=2e-3, help='weight of smooth loss')
+    parser.add_argument("--lambda_patchsmooth", type=float, default=0, help='weight of smooth loss')
     parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
     parser.add_argument("--lambda_delta", type=float, default=0.03, help='weight of delta color loss')
     parser.add_argument("--lambda_weight", type=float, default=0.05, help='weight of weight loss')
@@ -95,7 +96,7 @@ if __name__ == '__main__':
     parser.add_argument("--smooth_epoch", type=int, default=30, help='number of maximum epoch before add smooth loss')
     
     parser.add_argument("--sigma_clip", type=float, default=0, help='sigma of clip feature (used in smooth loss)')
-    parser.add_argument("--sigma_color", type=float, default=1, help='sigma of color (used in smooth loss)')
+    parser.add_argument("--sigma_color", type=float, default=0.2, help='sigma of color (used in smooth loss)')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
     parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
@@ -180,7 +181,7 @@ if __name__ == '__main__':
                                 use_checkpoint=opt.ckpt, nerf_path=None)
         if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
-            test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='video').dataloader()
             try:
                 video_loader = NeRFDataset(opt, device=device, type='video').dataloader()
             except: 
@@ -201,7 +202,7 @@ if __name__ == '__main__':
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
 
-            trainer.test(test_loader, write_video=True) # test and save video
+            trainer.test(test_loader, write_video=False) # test and save video
     else:      
         assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
         palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']

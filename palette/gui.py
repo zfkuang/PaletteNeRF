@@ -3,6 +3,7 @@ import math
 import torch
 import torch.optim as optim
 import numpy as np
+import pickle
 import dearpygui.dearpygui as dpg
 from scipy.spatial.transform import Rotation as R
 
@@ -393,14 +394,14 @@ class PaletteGUI:
                 
                 with dpg.group(horizontal=True):
                     def callback_renderview(sender, app_data):
-                        self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id) # test and save video
+                        self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id, gui_mode=True) # test and save video
 
                     dpg.add_button(label="render view", tag="_button_render_view", callback=callback_renderview)
                     dpg.bind_item_theme("_button_render_view", theme_button)
 
                     if self.video_loader is not None:
                         def callback_rendervideo(sender, app_data):
-                            self.trainer.test(self.video_loader, save_path="./results_gui", write_video=True) # test and save video
+                            self.trainer.test(self.video_loader, save_path="./results_gui", write_video=True, gui_mode=True) # test and save video
 
                         dpg.add_button(label="render video", tag="_button_render_video", callback=callback_rendervideo)
                         dpg.bind_item_theme("_button_render_video", theme_button)
@@ -510,12 +511,19 @@ class PaletteGUI:
 
                 def callback_reset_palette(sender, app_data):
                     self.palette = self.origin_palette.clone()
+                    self.trainer.model.dir_weight = 1
                     refresh_palette_color()
                     self.need_update = True
                     
                 dpg.add_button(label="reset", tag="_button_reset_palette", callback=callback_reset_palette)
                 dpg.bind_item_theme("_button_reset_palette", theme_button)
 
+                def call_back_set_dir_weight(sender, app_data):
+                    self.trainer.model.dir_weight = app_data
+                    self.need_update = True
+                dpg.add_slider_float(label="dir_weight", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_dir_weight)
+                
                 def callback_set_palette_id(sender, app_data):
                     self.highlight_palette_id = app_data                    
                     refresh_palette_color()
@@ -562,7 +570,7 @@ class PaletteGUI:
                     # self.style_W = self.style_image.shape[1] // 8
                     # self.style_H = self.style_image.shape[0] // 8
                   
-                with dpg.file_dialog(directory_selector=False, show=False, width=400, height=300, default_path="/home/zhengfei/cvpr2023/experiments/2_stylization/images", callback=callback_select_style_image, tag="file_dialog_id"):
+                with dpg.file_dialog(directory_selector=False, show=False, width=800, height=300, default_path="/home/zhengfei/cvpr2023/experiments/2_stylization/images", callback=callback_select_style_image, tag="file_dialog_id"):
                     dpg.add_file_extension("", color=(255, 150, 150, 255))
                     dpg.add_file_extension(".*")
                     dpg.add_file_extension(".jpg", color=(255, 0, 255, 255), custom_text="[jpg]")
@@ -593,7 +601,41 @@ class PaletteGUI:
                         self.style_color_list.append(self.style_image[self.style_pixel[1], self.style_pixel[0]])
                         self.style_point_list.append(self.selected_point)
                         update_correspondence_list()
+                            
+                    def callback_save_correspondence(sender, app_data):
+                        assert(self.style_point_list is not None and self.style_color_list is not None)
+                        corr_dict = {
+                            'points': self.style_point_list,
+                            'colors': self.style_color_list
+                        }
+                        pickle.dump(corr_dict, open("./results_gui/style_corr.pkl", "wb"))
+                        
+                    def callback_load_correspondence(sender, app_data):
+                        assert(self.style_point_list is not None and self.style_color_list is not None)
+                        filename = app_data['selections'][list(app_data['selections'].keys())[0]]
+                        corr_dict = pickle.load(open(filename, "rb"))
+                        self.style_point_list = corr_dict['points']
+                        self.style_color_list = corr_dict['colors']
+                        update_correspondence_list()
+                        
+                    with dpg.file_dialog(directory_selector=False, show=False, width=800, height=300, 
+                                         default_path="./results_gui", callback=callback_load_correspondence, tag="style_file_dialog"):
+                        dpg.add_file_extension("", color=(255, 150, 150, 255))
+                        dpg.add_file_extension(".*")
+                        dpg.add_file_extension(".pkl", color=(255, 0, 255, 255), custom_text="[pkl]")
+
+                    dpg.add_button(label="add correspondence", tag="_button_add_corr", callback=callback_add_correspondence)
+                    dpg.bind_item_theme("_button_add_corr", theme_button)
                     
+                    dpg.add_button(label="save", tag="_button_save_corr", callback=callback_save_correspondence)
+                    dpg.bind_item_theme("_button_save_corr", theme_button)
+                    
+                    dpg.add_button(label="load", tag="_button_load_corr", callback=lambda: dpg.show_item("style_file_dialog"))
+                    dpg.bind_item_theme("_button_load_corr", theme_button)
+                    
+                    
+                    
+                with dpg.group(horizontal=True):  
                     def callback_stylize(sender, app_data):
                             if self.stylize:
                                 self.stylize = False
@@ -608,16 +650,12 @@ class PaletteGUI:
                                 
                     def callback_optimize_stylize(sender, app_data):
                         self.need_optimize_stylize = True
-
-                    dpg.add_button(label="add correspondence", tag="_button_add_corr", callback=callback_add_correspondence)
-                    dpg.bind_item_theme("_button_add_corr", theme_button)
-                    
+                        
                     dpg.add_button(label="stylize", tag="_button_stylize", callback=callback_stylize)
                     dpg.bind_item_theme("_button_stylize", theme_button)
                     
                     dpg.add_button(label="optimize", tag="_button_optimize_stylize", callback=callback_optimize_stylize)
                     dpg.bind_item_theme("_button_optimize_stylize", theme_button)
-
 
                 dpg.add_text("", tag="_img_point")
                 dpg.add_text("", tag="_style_pixel")

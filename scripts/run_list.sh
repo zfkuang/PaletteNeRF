@@ -1,3 +1,4 @@
+bash scripts/orchids.sh -m nerf
 # bash scripts/fern.sh -m nerf
 # bash scripts/flower.sh -m nerf
 # bash scripts/bonsai.sh -m nerf
@@ -11,6 +12,7 @@
 # bash scripts/ficus.sh -m nerf
 # bash scripts/ship.sh -m nerf
 
+# bash scripts/orchids.sh -m extract
 # bash scripts/hotdog.sh -m extract
 # bash scripts/lego.sh -m extract
 # bash scripts/chair.sh -m extract
@@ -23,8 +25,9 @@
 # bash scripts/ficus.sh -m extract
 # bash scripts/ship.sh -m extract
 
-# bash scripts/bonsai.sh -m palette
+# bash scripts/orchids.sh -m palette
 # bash scripts/fern.sh -m palette
+# bash scripts/bonsai.sh -m palette
 # bash scripts/flower.sh -m palette
 # bash scripts/chair.sh -m palette
 # bash scripts/horns.sh -m palette
@@ -32,5 +35,5 @@
 # bash scripts/lego.sh -m palette
 # bash scripts/kitchen.sh -m palette
 # bash scripts/room.sh -m palette
-bash scripts/ficus.sh -m palette
-bash scripts/ship.sh -m palette
+# bash scripts/ficus.sh -m palette
+# bash scripts/ship.sh -m palette

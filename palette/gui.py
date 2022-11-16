@@ -57,7 +57,7 @@ class OrbitCamera:
     
 
 class PaletteGUI:
-    def __init__(self, opt, trainer, palette, hist_weights, train_loader=None, video_loader=None, debug=True):
+    def __init__(self, opt, trainer, train_loader=None, video_loader=None, debug=True):
         self.opt = opt # shared with the trainer's opt to support in-place modification of rendering parameters.
         self.W = opt.W
         self.H = opt.H
@@ -167,7 +167,8 @@ class PaletteGUI:
             
             total_iters = 1000
             stylizer = Stylizer(self.opt).to(xyzs.device)
-            style_optimizer = optim.SGD(stylizer.parameters(), lr=0.01) 
+            style_optimizer = optim.SGD(stylizer.parameters(), lr=0.001, momentum=0.9) 
+            # style_optimizer = torch.optim.Adam(stylizer.parameters(), lr=0.01, betas=(0.9, 0.99), eps=1e-15)
             style_scheduler = optim.lr_scheduler.LambdaLR(style_optimizer, lambda iter: 0.1 ** min(iter /total_iters, 1))
             loss = 0 
             
@@ -177,12 +178,15 @@ class PaletteGUI:
                 rgbs = stylizer(radiance, omega, basis_color, d_color)
                 loss = ((rgbs-gt_rgbs)**2).sum()
                 loss_ARAP = stylizer.ARAP_loss() * self.lambda_ARAP
+                loss_ARAP += (stylizer.dP**2).sum() * self.lambda_ARAP
                 loss += loss_ARAP 
                 loss.backward()
                 style_optimizer.step()
                 style_scheduler.step()
-                pbar.set_description(f"Optimizing Stlization, Loss={loss:.3f}")
+                pbar.set_description(f"Optimizing Stlization, Loss={loss:.3f}, Loss_ARAP={loss_ARAP:.3f}")
             
+            # print(stylizer.ddelta)
+            print(stylizer.dP)
             self.cached_stylizer = stylizer
             if self.stylize:
                 self.trainer.model.stylizer = self.cached_stylizer
@@ -517,7 +521,13 @@ class PaletteGUI:
                     
                 dpg.add_button(label="reset", tag="_button_reset_palette", callback=callback_reset_palette)
                 dpg.bind_item_theme("_button_reset_palette", theme_button)
-
+                
+                def call_back_set_delta_weight(sender, app_data):
+                    self.trainer.model.delta_weight = app_data
+                    self.need_update = True
+                dpg.add_slider_float(label="delta_weight", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_delta_weight)
+                
                 def call_back_set_dir_weight(sender, app_data):
                     self.trainer.model.dir_weight = app_data
                     self.need_update = True

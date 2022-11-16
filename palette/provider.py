@@ -166,7 +166,7 @@ class NeRFDataset:
         # read images
         frames = transform["frames"]
         #frames = sorted(frames, key=lambda d: d['file_path']) # why do I sort...
-        
+
         if self.mode == 'colmap' and type == 'test':
 
             # choose two random poses, and interpolate between.
@@ -184,40 +184,43 @@ class NeRFDataset:
                 pose[:3, :3] = slerp(ratio).as_matrix()
                 pose[:3, 3] = (1 - ratio) * pose0[:3, 3] + ratio * pose1[:3, 3]
                 self.poses.append(pose)
-        elif self.mode == 'blender' and type == 'test':        
-            origin_poses = []    
+        elif self.mode == 'blender' and type == 'test':       
+            self.poses = []
+            self.images = []
             for f in tqdm.tqdm(frames, desc=f'Loading {type} data'):
                 f_path = os.path.join(self.root_path, f['file_path'])
                 if self.mode == 'blender' and '.' not in os.path.basename(f_path):
                     f_path += '.png' # so silly...
 
                 # there are non-exist paths in fox...
-                if not os.path.exists(f_path):
+                # if not os.path.exists(f_path):
+                #     continue
+                if not os.path.exists(f_path) and type != 'video':
                     continue
-                if self.H is None or self.W is None:
-                    image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
-                    self.H = image.shape[0] // downscale
-                    self.W = image.shape[1] // downscale
-
+                
                 pose = np.array(f['transform_matrix'], dtype=np.float32) # [4, 4]
                 pose = nerf_matrix_to_ngp(pose, scale=self.scale, offset=self.offset)
-                origin_poses.append(pose)
-                
-            origin_poses = np.stack(origin_poses, axis=0)
-            rots = Rotation.from_matrix(origin_poses[:, :3, :3])
-            slerp = Slerp(np.arange(len(origin_poses)), rots)
-            
-            self.poses = []
-            self.images = None
-            step_size = (len(origin_poses)-1) / n_test
-            for i in range(n_test + 1):
-                pose_idx = min(len(origin_poses)-2, math.floor(i * step_size))
-                ratio = i * step_size - pose_idx
-                pose = np.eye(4, dtype=np.float32)
-                pose[:3, :3] = slerp(i * step_size).as_matrix()
-                pose[:3, 3] = (1 - ratio) * origin_poses[pose_idx, :3, 3] + \
-                                ratio * origin_poses[pose_idx+1, :3, 3]
+
                 self.poses.append(pose)
+                if os.path.exists(f_path):
+                    image = cv2.imread(f_path, cv2.IMREAD_UNCHANGED) # [H, W, 3] o [H, W, 4]
+                    if image.dtype == np.uint16 and image.max() > 500:
+                        image = (image // 256).astype(np.uint8)
+                    if self.H is None or self.W is None:
+                        self.H = image.shape[0] // downscale
+                        self.W = image.shape[1] // downscale
+
+                    # add support for the alpha channel as a mask.
+                    if image.shape[-1] == 3: 
+                        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                    else:
+                        image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+
+                    if image.shape[0] != self.H or image.shape[1] != self.W:
+                        image = cv2.resize(image, (self.W, self.H), interpolation=cv2.INTER_AREA)
+                    image = image.astype(np.float32) / 255 # [H, W, 3/4]
+
+                    self.images.append(image)
         else:
             # for colmap, manually split a valid set (the first frame).
             if self.mode == 'colmap':
@@ -267,13 +270,16 @@ class NeRFDataset:
                     image = image.astype(np.float32) / 255 # [H, W, 3/4]
 
                     if self.opt.pred_clip and type == 'train':
-                        feat_image = np.load(os.path.join(self.root_path, 'lseg_feature', os.path.basename(f_path)+".npy")) # [H, W, D_clip]
-                        feat_image = torch.from_numpy(feat_image)
-                        feat_image = feat_image.permute(2, 0, 1)[None,...]
-                        feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
-                        if self.preload:
-                            feat_image = feat_image.to(self.device)
-                        self.feat_images.append(feat_image[0].permute(1, 2, 0))
+                        if self.opt.ablation_name == "":
+                            feat_image = np.load(os.path.join(self.root_path, 'lseg_feature', os.path.basename(f_path)+".npy")) # [H, W, D_clip]
+                            feat_image = torch.from_numpy(feat_image)
+                            feat_image = feat_image.permute(2, 0, 1)[None,...]
+                            feat_image = F.interpolate(feat_image, (self.H, self.W), mode="bilinear", align_corners=True)
+                            if self.preload:
+                                feat_image = feat_image.to(self.device)
+                            self.feat_images.append(feat_image[0].permute(1, 2, 0))
+                        else:
+                            self.feat_images.append(torch.zeros(image.shape[0], image.shape[1], self.opt.clip_dim, device=device))
 
                     self.images.append(image)
              

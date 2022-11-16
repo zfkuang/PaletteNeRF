@@ -1,4 +1,4 @@
-bash scripts/orchids.sh -m nerf
+# bash scripts/orchids.sh -m nerf
 # bash scripts/fern.sh -m nerf
 # bash scripts/flower.sh -m nerf
 # bash scripts/bonsai.sh -m nerf
@@ -37,3 +37,7 @@ bash scripts/orchids.sh -m nerf
 # bash scripts/room.sh -m palette
 # bash scripts/ficus.sh -m palette
 # bash scripts/ship.sh -m palette
+
+bash scripts/room_lseg.sh -m palette
+bash scripts/kitchen_lseg.sh -m palette
+bash scripts/bonsai_lseg.sh -m palette

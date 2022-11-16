@@ -53,7 +53,7 @@ class OrbitCamera:
     
 
 class NeRFGUI:
-    def __init__(self, opt, trainer, train_loader=None, debug=True):
+    def __init__(self, opt, trainer, train_loader=None, video_loader=None, debug=True):
         self.opt = opt # shared with the trainer's opt to support in-place modification of rendering parameters.
         self.W = opt.W
         self.H = opt.H
@@ -64,6 +64,7 @@ class NeRFGUI:
         self.step = 0 # training step 
 
         self.trainer = trainer
+        self.video_loader = video_loader
         self.train_loader = train_loader
         if train_loader is not None and not opt.test:
             self.trainer.error_map = train_loader._data.error_map
@@ -320,12 +321,21 @@ class NeRFGUI:
                     self.need_update = True
                 dpg.add_slider_int(label="test_pose", min_value=1, max_value=len(self.train_loader._data.poses), format="%d", default_value=0, callback=callback_set_testcam)
 
-                def callback_renderview(sender, app_data):
-                    self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id) # test and save video
+     
+                with dpg.group(horizontal=True):
+                    def callback_renderview(sender, app_data):
+                        self.trainer.test(self.train_loader, save_path="./results_gui", write_video=False, selected_idx=self.test_cam_id) # test and save video
+                        
+                    dpg.add_button(label="render view", tag="_button_render_view", callback=callback_renderview)
+                    dpg.bind_item_theme("_button_render_view", theme_button)
 
-                dpg.add_button(label="render view", tag="_button_render_view", callback=callback_renderview)
-                dpg.bind_item_theme("_button_render_view", theme_button)
-                
+                    if self.video_loader is not None:
+                        def callback_rendervideo(sender, app_data):
+                            self.trainer.test(self.video_loader, save_path="./results_gui", write_video=True) # test and save video
+
+                        dpg.add_button(label="render video", tag="_button_render_video", callback=callback_rendervideo)
+                        dpg.bind_item_theme("_button_render_video", theme_button)
+                    
                 # fov slider
                 def callback_set_fovy(sender, app_data):
                     self.cam.fovy = app_data

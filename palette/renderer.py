@@ -126,7 +126,10 @@ class RegionEdit(nn.Module):
         if xyz is not None and self.mean_xyz is not None:
             weight *= torch.exp(-((xyz-self.mean_xyz)**2.).sum(dim=-1, keepdim=True)/self.std_xyz)
         if clip_feat is not None and self.mean_clip is not None:
-            weight *= torch.exp(-((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)/self.std_clip)
+            #temp = ((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)
+            weight *= torch.exp(-((clip_feat-self.mean_clip)**2.).sum(dim=-1, keepdim=True)/self.std_clip)
+            # temp /= (self.mean_clip**2+1e-6).sum(dim=-1, keepdim=True)
+            #weight *= (temp < self.std_clip).float() # vtorch.exp(-(temp/self.std_clip))
 
         hsv_new = hsv.clone()
         hsv_new[...,0] = torch.fmod((hsv[...,0]+self.delta_hsv[...,0]+360), 360)
@@ -204,6 +207,7 @@ class PaletteRenderer(nn.Module):
         self.stylizer = None
         
         self.dir_weight = 1
+        self.delta_weight = 1
         
         # prepare aabb with a 6D tensor (xmin, ymin, zmin, xmax, ymax, zmax)
         # NOTE: aabb (can be rectangular) is only used to generate points, we still rely on bound (always cubic) to calculate density grid and hashing.
@@ -562,6 +566,11 @@ class PaletteRenderer(nn.Module):
             diffuse = diffuse.reshape(M, 3)
             clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
+            if self.opt.no_delta:
+                d_color = d_color*0
+            if self.opt.no_dir:
+                dir_color = dir_color*0
+
             basis_color = self.basis_color[None,:,:].clamp(0, 1)
             if self.freeze_basis_color:
                 basis_color = basis_color.detach()
@@ -623,6 +632,9 @@ class PaletteRenderer(nn.Module):
                 smooth_weight = (xyzs_weight + rgb_weight + clip_weight).detach()
                 smooth_weight = torch.exp(-smooth_weight)
                 smooth_norm = ((omega_diff-omega)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight
+                if self.opt.pred_clip:
+                    smooth_norm += ((clip_feat_diff-clip_feat)**2).sum(dim=-1, keepdim=True) * smooth_weight
+                    
             else: 
                 smooth_norm = torch.zeros_like(omega_norm)
             # basis_acc_map_list = []
@@ -723,6 +735,12 @@ class PaletteRenderer(nn.Module):
                 diffuse = diffuse.reshape(M, 3)
                 clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
+                if self.opt.no_delta:
+                    d_color = d_color*0
+                if self.opt.no_dir:
+                    dir_color = dir_color*0
+                        
+
                 basis_color = self.basis_color[None,:,:].clamp(0, 1)
                 if self.stylizer is not None:
                     rgbs = self.stylizer(radiance, omega, basis_color, d_color, dir_color)
@@ -731,7 +749,7 @@ class PaletteRenderer(nn.Module):
                         final_color = (basis_color*d_color).clamp(0, 1)
                     else:
                         if self.opt.separate_radiance:
-                            final_color = (F.softplus(radiance)*(basis_color+d_color))# .clamp(0, 1)
+                            final_color = (F.softplus(radiance)*(basis_color+self.delta_weight * d_color))# .clamp(0, 1)
                         else:
                             final_color = (basis_color+d_color)# .clamp(0, 1)
                         unscaled_final_color = (basis_color+d_color)# .clamp(0, 1)
@@ -741,7 +759,7 @@ class PaletteRenderer(nn.Module):
                         final_color = self.edit(final_color, xyzs, clip_feat)
                     
                     basis_rgb = omega*final_color # .clamp(0, 1) # N_rays, N_sample, N_basis, 3
-                    unscaled_basis_rgb = omega*unscaled_final_color
+                    unscaled_basis_rgb = unscaled_final_color
 
                     rgbs = basis_rgb.sum(dim=-2) + self.dir_weight * dir_color # (N_rays, N_samples_, 3)
 

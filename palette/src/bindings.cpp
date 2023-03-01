@@ -7,7 +7,7 @@
 #include <torch/torch.h>
 #include <torch/extension.h>
 
-#include "nbd_palette.h"
+#include "palette_func.h"
 
 namespace py = pybind11;
 

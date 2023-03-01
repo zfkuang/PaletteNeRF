@@ -44,9 +44,9 @@ from .rgbsg import *
 from sklearn.decomposition import PCA
 
 try:
-    import _nbd_palette as _backend
+    import _palette_func as _backend
 except ImportError:
-    print("Loading module nbd_palette...")
+    print("Loading module palette_func...")
     from .backend import _backend
 
 def get_palette_weight_with_hist(rgb, hist_weights):

@@ -29,7 +29,7 @@ elif os.name == "nt":
             raise RuntimeError("Could not locate a supported Microsoft Visual C++ installation")
         os.environ["PATH"] += ";" + cl_path
 
-_backend = load(name='_nbd_palette',
+_backend = load(name='palette_func',
                 extra_cflags=c_flags,
                 extra_cuda_cflags=nvcc_flags,
                 sources=[os.path.join(_src_path, 'src', f) for f in [

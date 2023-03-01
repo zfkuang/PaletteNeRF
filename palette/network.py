@@ -25,7 +25,6 @@ class PaletteNetwork(PaletteRenderer):
                  ):
         super().__init__(opt, bound, **kwargs)
 
-        # sigma network
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
@@ -35,6 +34,7 @@ class PaletteNetwork(PaletteRenderer):
 
         self.num_basis = opt.num_basis
 
+        # sigma network
         sigma_net = []
         for l in range(num_layers):
             if l == 0:
@@ -51,10 +51,12 @@ class PaletteNetwork(PaletteRenderer):
 
         self.sigma_net = nn.ModuleList(sigma_net)
 
-        # color network
         self.num_layers_color = num_layers_color        
         self.hidden_dim_color = hidden_dim_color
         self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir)
+
+        # view-dependent color network
+        # note: this network is named as "color_net" in order to inherit the weights from the vanilla NeRF's color network.
         color_net = []
         for l in range(num_layers_color):
             if l == 0:
@@ -71,6 +73,7 @@ class PaletteNetwork(PaletteRenderer):
 
         self.color_net = nn.ModuleList(color_net)
 
+        # diffuse color network
         diff_net = []
         for l in range(num_layers_color):
             if l == 0:
@@ -87,6 +90,7 @@ class PaletteNetwork(PaletteRenderer):
 
         self.diff_net = nn.ModuleList(diff_net)
 
+        # palette basis network
         basis_net = []
         for l in range(num_layers):
             if l == 0:
@@ -102,12 +106,12 @@ class PaletteNetwork(PaletteRenderer):
             basis_net.append(nn.Linear(in_dim, out_dim, bias=False))
 
         self.basis_net = nn.ModuleList(basis_net)
-        if self.opt.multiply_delta:
-            self.delta_color_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis*3+1), nn.ELU())
-        else:
-            self.delta_color_net = nn.Linear(self.geo_feat_dim, self.num_basis*3+1)
+
+        # color offset, radiance and color weights
+        self.offsets_radiance_net = nn.Linear(self.geo_feat_dim, self.num_basis*3+1)
         self.omega_net = nn.Sequential(nn.Linear(self.geo_feat_dim, self.num_basis, bias=False), nn.Softplus())
 
+        # clip feature network
         if opt.pred_clip:
             clip_net = []
             for l in range(num_layers):
@@ -153,17 +157,17 @@ class PaletteNetwork(PaletteRenderer):
         # x: [N, 3], in [-bound, bound]
         # d: [N, 3], nomalized in [-1, 1]
 
-        # sigma
+        # predict sigma
         h = self.encoder(x, bound=self.bound)
         for l in range(self.num_layers):
             h = self.sigma_net[l](h)
             if l != self.num_layers - 1:
                 h = F.relu(h, inplace=True)
 
-        #sigma = F.relu(h[..., 0])
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:].detach()
 
+        # predict clip feature
         if self.opt.pred_clip:
             h = self.encoder_clip(x, bound=self.bound)
             for l in range(self.num_layers):
@@ -175,9 +179,10 @@ class PaletteNetwork(PaletteRenderer):
             clip_feat = torch.zeros_like(sigma[...,None].repeat(1, self.opt.clip_dim))
         #sigma = F.relu(h[..., 0])
 
-        # sigmoid activation for rgb
-        d_color, omega, color, diffuse = self.color(x, d, geo_feat=geo_feat)
-        return sigma, clip_feat, d_color, omega, color, diffuse
+        # predict palette basis
+        omega, offsets_radiance, view_dep, diffuse = self.color(x, d, geo_feat=geo_feat)
+
+        return sigma, clip_feat, omega, offsets_radiance, view_dep, diffuse
 
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
@@ -220,13 +225,13 @@ class PaletteNetwork(PaletteRenderer):
         # mask: [N,], bool, indicates where we actually needs to compute rgb.
         
         if mask is not None:
-            d_color = torch.zeros(x.shape[0], 3*self.num_basis, dtype=x.dtype, device=x.device) # [N, 3]
             omega = torch.zeros(x.shape[0], self.num_basis, dtype=x.dtype, device=x.device) # [N, NB]
             omega = F.softmax(omega, dim=-1) # B, N_B
-            color = torch.zeros(x.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
+            offsets_radiance = torch.zeros(x.shape[0], 3*self.num_basis, dtype=x.dtype, device=x.device) # [N, 3]
+            view_dep = torch.zeros(x.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]
             diffuse = torch.zeros(x.shape[0], 3, dtype=x.dtype, device=x.device) # [N, NB]        
             if not mask.any():
-                return d_color, omega, color, diffuse
+                return omega, offsets_radiance, view_dep, diffuse
             x = x[mask]        
             d = d[mask]        
             geo_feat = geo_feat[mask]       
@@ -237,51 +242,42 @@ class PaletteNetwork(PaletteRenderer):
             h = self.diff_net[l](h)
             if l != self.num_layers_color - 1:
                 h = F.relu(h, inplace=True)
-        
-        # sigmoid activation for rgb
         h_diffuse = F.sigmoid(h)
-        
-        # specular color
+
+        # view-dependent color
         d = self.encoder_dir(d)
         h = torch.cat([d, geo_feat.detach()], dim=-1)
         for l in range(self.num_layers_color):
             h = self.color_net[l](h)
             if l != self.num_layers_color - 1:
                 h = F.relu(h, inplace=True)
+        h_view_dep = F.sigmoid(h)
         
-        # sigmoid activation for rgb
-        h_color = F.sigmoid(h)
-        
+        # palette basis
         h = self.encoder_palette(x, bound=self.bound)
         h = torch.cat([h, h_diffuse.detach()], dim=-1)
         for l in range(self.num_layers):
             h = self.basis_net[l](h)
             if l != self.num_layers - 1:
                 h = F.elu(h, inplace=True)
-
-        #sigma = F.relu(h[..., 0])
         h_palette_geo_feat = h
         
-        if self.opt.multiply_delta:
-            h_d_color = self.delta_color_net(h_palette_geo_feat)+1 # B, N_B*3
-        else:
-            h_d_color = self.delta_color_net(h_palette_geo_feat) # B, N_B*3
+        h_offsets_radiance = self.offsets_radiance_net(h_palette_geo_feat) # B, N_B*3
         h_omega = self.omega_net(h_palette_geo_feat)+0.05 # B, N_B
-        # h_omega = F.softmax(h_omega, dim=-1) # B, N_B
         h_omega = h_omega / (h_omega.sum(dim=-1, keepdim=True)) # B, N_B
         
         if mask is not None:
-            d_color[mask] = h_d_color.to(d_color.dtype) # fp16 --> fp32
+            offsets_radiance[mask] = h_offsets_radiance.to(offsets_radiance.dtype) # fp16 --> fp32
             omega[mask] = h_omega.to(omega.dtype) # fp16 --> fp32
-            color[mask] = h_color.to(color.dtype) # fp16 --> fp32
+            view_dep[mask] = h_view_dep.to(view_dep.dtype) # fp16 --> fp32
             diffuse[mask] = h_diffuse.to(diffuse.dtype) # fp16 --> fp32
         else:
-            d_color = h_d_color
+            offsets_radiance = h_offsets_radiance
             omega = h_omega
-            color = h_color 
+            view_dep = h_view_dep 
             diffuse = h_diffuse 
         
-        return d_color, omega, color, diffuse
+        return omega, offsets_radiance, view_dep, diffuse
 
     # optimizer utils
     def get_params(self, lr):
@@ -294,7 +290,7 @@ class PaletteNetwork(PaletteRenderer):
             {'params': self.encoder_dir.parameters(), 'lr': lr},
             {'params': self.color_net.parameters(), 'lr': lr}, 
             {'params': self.diff_net.parameters(), 'lr': lr}, 
-            {'params': self.delta_color_net.parameters(), 'lr': lr}, 
+            {'params': self.offsets_radiance_net.parameters(), 'lr': lr}, 
             {'params': self.omega_net.parameters(), 'lr': lr}, 
             {'params': self.basis_color, 'lr': lr}, 
             {'params': self.hist_weights, 'lr': lr}, 

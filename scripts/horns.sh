@@ -89,8 +89,7 @@ elif [[ $model == 'palette' ]]; then
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --use_normalized_palette \
-    --separate_radiance \
-    --datatype ${datatype} \
+        --datatype ${datatype} \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

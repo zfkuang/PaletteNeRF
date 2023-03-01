@@ -85,8 +85,7 @@ elif [[ $model == 'palette' ]]; then
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \
-    --separate_radiance \
-    --dt_gamma 0 \
+    z--dt_gamma 0 \
     --datatype ${datatype} \
     $test_mode
 else

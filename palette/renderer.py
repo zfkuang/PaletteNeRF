@@ -341,11 +341,6 @@ class PaletteRenderer(nn.Module):
             diffuse = diffuse.reshape(M, 3)
             clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
-            if self.opt.no_delta:
-                d_color = d_color*0
-            if self.opt.no_dir:
-                dir_color = dir_color*0
-
             basis_color = self.basis_color[None,:,:].clamp(0, 1)
             if self.freeze_basis_color:
                 basis_color = basis_color.detach()
@@ -479,13 +474,7 @@ class PaletteRenderer(nn.Module):
                 omega = omega.reshape(M, self.num_basis, 1)
                 view_dep = view_dep.reshape(M, 3)
                 diffuse = diffuse.reshape(M, 3)
-                clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
-
-                if self.opt.no_delta:
-                    d_color = d_color*0
-                if self.opt.no_dir:
-                    dir_color = dir_color*0
-                        
+                clip_feat = clip_feat.reshape(M, self.opt.clip_dim)                        
 
                 basis_color = self.basis_color[None,:,:].clamp(0, 1)
                 

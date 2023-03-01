@@ -91,8 +91,7 @@ elif [[ $model == 'palette' ]]; then
     --use_initialization_from_rgbxy \
     --model_mode palette \
     --use_normalized_palette \
-    --separate_radiance \
-    --datatype ${datatype} \
+        --datatype ${datatype} \
     --pred_clip \
     --clip_dim 16 \
     $test_mode

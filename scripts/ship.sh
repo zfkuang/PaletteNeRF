@@ -84,8 +84,7 @@ elif [[ $model == 'palette' ]]; then
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --use_normalized_palette \
-    --separate_radiance \
-    --dt_gamma 0 \
+        --dt_gamma 0 \
     --datatype ${datatype} \
     $test_mode
 else

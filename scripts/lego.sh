@@ -10,7 +10,7 @@ iters=30000
 offset='0 0 0'
 patch_size=8
 random_size=0
-data_dir="./data/nerf_synthetic/lego"
+data_dir="../../data/nerf_synthetic/lego"
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -83,7 +83,6 @@ elif [[ $model == 'palette' ]]; then
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --use_normalized_palette \
-    --separate_radiance \
     --dt_gamma 0 \
     --datatype ${datatype} \
     $test_mode

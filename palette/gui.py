@@ -158,11 +158,10 @@ class PaletteGUI:
             M = xyzs.shape[0]
             
             with torch.no_grad():
-                _, _, d_color, omega, _, diffuse = self.trainer.model(xyzs, dirs)
-                radiance = d_color[...,-1:]
-                d_color = d_color[...,:-1]
+                _, _, omega, offsets_radiance, _, diffuse = self.trainer.model(xyzs, dirs)
+                radiance, offsets = offsets_radiance[...,-1:], offsets_radiance[...,:-1]
                 radiance = radiance.reshape(M, 1, 1)
-                d_color = d_color.reshape(M, self.opt.num_basis, 3)
+                offsets = offsets.reshape(M, self.opt.num_basis, 3)
                 omega = omega.reshape(M, self.opt.num_basis, 1)
                 diffuse = diffuse.reshape(M, 3)
                 basis_color = self.trainer.model.basis_color[None,:,:].clamp(0, 1)
@@ -177,7 +176,7 @@ class PaletteGUI:
             pbar = tqdm.trange(total_iters)
             for i in pbar:
                 style_optimizer.zero_grad()
-                rgbs = stylizer(radiance, omega, basis_color, d_color)
+                rgbs = stylizer(radiance, omega, basis_color, offsets)
                 loss = ((rgbs-gt_rgbs)**2).sum()
                 loss_ARAP = stylizer.ARAP_loss() * self.lambda_ARAP
                 loss_ARAP += (stylizer.dP**2).sum() * self.lambda_ARAP

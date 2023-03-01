@@ -1138,8 +1138,6 @@ class PaletteTrainer(object):
         '''
         if save_path is None:
             save_path = self.workspace
-        if normalize_input:
-            save_path = save_path.replace("version", "normalized_version")
 
         if name is None:
             name = f'{self.name}_ep{self.epoch:04d}'

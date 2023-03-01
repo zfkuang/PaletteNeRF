@@ -157,7 +157,7 @@ class PaletteNetwork(PaletteRenderer):
         # x: [N, 3], in [-bound, bound]
         # d: [N, 3], nomalized in [-1, 1]
 
-        # predict sigma
+        # Predict sigma
         h = self.encoder(x, bound=self.bound)
         for l in range(self.num_layers):
             h = self.sigma_net[l](h)
@@ -167,7 +167,7 @@ class PaletteNetwork(PaletteRenderer):
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:].detach()
 
-        # predict clip feature
+        # Predict clip feature
         if self.opt.pred_clip:
             h = self.encoder_clip(x, bound=self.bound)
             for l in range(self.num_layers):
@@ -179,7 +179,7 @@ class PaletteNetwork(PaletteRenderer):
             clip_feat = torch.zeros_like(sigma[...,None].repeat(1, self.opt.clip_dim))
         #sigma = F.relu(h[..., 0])
 
-        # predict palette basis
+        # Predict palette basis
         omega, offsets_radiance, view_dep, diffuse = self.color(x, d, geo_feat=geo_feat)
 
         return sigma, clip_feat, omega, offsets_radiance, view_dep, diffuse
@@ -219,7 +219,7 @@ class PaletteNetwork(PaletteRenderer):
 
         return rgbs
 
-    # allow masked inference
+    # Allow masked inference
     def color(self, x, d, mask=None, geo_feat=None, **kwargs):
         # x: [N, 3] in [-bound, bound]
         # mask: [N,], bool, indicates where we actually needs to compute rgb.
@@ -236,7 +236,7 @@ class PaletteNetwork(PaletteRenderer):
             d = d[mask]        
             geo_feat = geo_feat[mask]       
   
-        # diffuse color
+        # Diffuse color
         h = geo_feat.detach()
         for l in range(self.num_layers_color):
             h = self.diff_net[l](h)
@@ -244,7 +244,7 @@ class PaletteNetwork(PaletteRenderer):
                 h = F.relu(h, inplace=True)
         h_diffuse = F.sigmoid(h)
 
-        # view-dependent color
+        # View-dependent color
         d = self.encoder_dir(d)
         h = torch.cat([d, geo_feat.detach()], dim=-1)
         for l in range(self.num_layers_color):
@@ -253,7 +253,7 @@ class PaletteNetwork(PaletteRenderer):
                 h = F.relu(h, inplace=True)
         h_view_dep = F.sigmoid(h)
         
-        # palette basis
+        # Palette basis
         h = self.encoder_palette(x, bound=self.bound)
         h = torch.cat([h, h_diffuse.detach()], dim=-1)
         for l in range(self.num_layers):
@@ -279,7 +279,7 @@ class PaletteNetwork(PaletteRenderer):
         
         return omega, offsets_radiance, view_dep, diffuse
 
-    # optimizer utils
+    # Optimizer utils
     def get_params(self, lr):
 
         params = [

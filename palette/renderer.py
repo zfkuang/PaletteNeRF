@@ -12,12 +12,11 @@ from nerf.utils import custom_meshgrid
 from .utils import normalize, rgb_to_hsv, hsv_to_rgb
 from nerf.utils import srgb_to_linear
 
-def cos_distance(x, y, zero_protect=False):
-    # if zero_protect:
-    #     x = x + (0.2-x.max(dim=-1, keepdim=True)[0].clip(max=0.2).detach()).clip(max=0.05)
-    #     y = y + (0.2-y.max(dim=-1, keepdim=True)[0].clip(max=0.2).detach()).clip(max=0.05)
+# Utility functions 
+
+def cos_distance(x, y, safemode=False):
     result = 1-(normalize(x) * normalize(y)).sum(dim=-1)
-    if zero_protect:
+    if safemode:
         result = result * torch.minimum(x.norm(dim=-1), y.norm(dim=-1)).clip(max=0.2)*5
     return result
 
@@ -68,7 +67,6 @@ def sample_pdf(bins, weights, n_samples, det=False):
 
     return samples
 
-
 def plot_pointcloud(pc, color=None):
     # pc: [N, 3]
     # color: [N, 3/4]
@@ -80,6 +78,8 @@ def plot_pointcloud(pc, color=None):
     sphere = trimesh.creation.icosphere(radius=1)
     trimesh.Scene([pc, axes, sphere]).show()
 
+
+# Controller for regional appearance editing
 class RegionEdit(nn.Module):
     def __init__(self, opt):
         super().__init__()
@@ -103,8 +103,10 @@ class RegionEdit(nn.Module):
             self.std_clip = std_clip
 
     def update_delta(self, rgb_orig, rgb_new):
-        # import pdb
-        # pdb.set_trace()
+        '''
+            Given the original palettes' rgb and modified palettes' rgb, calculating the change in HSV Space.
+            More specifically, difference in H channel and scales in S,V channel
+        '''
         if rgb_orig.device != self.delta_hsv.device:
             self.delta_hsv = self.delta_hsv.type_as(rgb_orig)
         rgb_all = torch.cat([rgb_orig, rgb_new], dim=0)
@@ -115,16 +117,18 @@ class RegionEdit(nn.Module):
         self.delta_hsv[:, 0] = torch.fmod((hsv_new[:,0]-hsv_orig[:,0]+360), 360)
         self.delta_hsv[:, 1] = (hsv_new[:,1]/hsv_orig[:,1]+1e-9)
         self.delta_hsv[:, 2] = (hsv_new[:,2]/hsv_orig[:,2]+1e-9)
-        # import pdb
-        # pdb.set_trace()
 
     def forward(self, rgbs, xyz=None, clip_feat=None):
         hsv = rgb_to_hsv(rgbs)
         if rgbs.device != self.delta_hsv.device:
             self.delta_hsv = self.delta_hsv.type_as(rgbs)
         weight = torch.ones_like(rgbs[...,0:1,0])
+        
+        # Euclidean distance based filtering
         if xyz is not None and self.mean_xyz is not None:
             weight *= torch.exp(-((xyz-self.mean_xyz)**2.).sum(dim=-1, keepdim=True)/self.std_xyz)
+            
+        # Semantic map based filtering
         if clip_feat is not None and self.mean_clip is not None:
             weight *= torch.exp(-((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)/self.std_clip)
 
@@ -139,6 +143,8 @@ class RegionEdit(nn.Module):
         else:
             return torch.lerp(rgbs, rgb_new, weight[...,None])
         
+        
+# Solver of User-guided Photorealistic style transfer 
 class Stylizer(nn.Module):
     def __init__(self, opt):
         super().__init__()
@@ -165,9 +171,7 @@ class Stylizer(nn.Module):
         
         palette = (palette+self.dP) # N x N-p x 3
         delta = torch.einsum("npi, pij->npj", delta, self.ddelta) # N x N_p x 3
-        
-        # basis_rgb = ((F.softplus(radiance)+self.dI).clamp(0)*(palette+delta)).clamp(0, 1) # N x N_p x 3
-        
+    
         basis_rgb = ((F.softplus(radiance).repeat(1, self.opt.num_basis, 1)+self.dI[None,:,None]).clamp(0)*(palette+delta)).clamp(0, 1) # N x N_p x 3
         basis_rgb = omega*basis_rgb # N, N_p, 3
         rgbs = basis_rgb.sum(dim=-2) # N, 3
@@ -175,6 +179,7 @@ class Stylizer(nn.Module):
         if dir is not None:
             rgbs += dir.detach() # N, 3
         return rgbs.reshape(*prefix, 3)
+    
     
 class PaletteRenderer(nn.Module):
     def __init__(self,
@@ -203,7 +208,7 @@ class PaletteRenderer(nn.Module):
         self.edit = None
         self.stylizer = None
         
-        self.dir_weight = 1
+        self.view_dep_weight = 1
         
         # prepare aabb with a 6D tensor (xmin, ymin, zmin, xmax, ymax, zmax)
         # NOTE: aabb (can be rectangular) is only used to generate points, we still rely on bound (always cubic) to calculate density grid and hashing.
@@ -213,9 +218,12 @@ class PaletteRenderer(nn.Module):
         self.register_buffer('aabb_infer', aabb_infer)
 
         if opt.test or not opt.use_initialization_from_rgbxy:
+            # No initialization from the rgbxy palette extraction method.
             self.basis_color = torch.zeros([self.num_basis, 3])+0.5
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
         else:
+            # Palette initialized from extraction method.
+            # Parameter reserved to be initialized later.
             self.basis_color = None
 
         # extra state for cuda raymarching
@@ -234,21 +242,23 @@ class PaletteRenderer(nn.Module):
             self.mean_count = 0
             self.local_step = 0
 
-    def extracted_palette(self, color_list=None, hist_weights=None):
+    def initialize_palette(self, color_list=None, hist_weights=None):
         if color_list is None:
             if self.basis_color is None:
                 self.basis_color = torch.zeros([self.num_basis, 3]) + 0.5
                 self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
         else:
-            # assert(self.num_basis == color_list.shape[0]*len(self.opt.roughness_list))
             self.basis_color = torch.zeros([self.num_basis, 3])
             for i, color in enumerate(color_list):
                 if self.opt.color_space == "linear":
-                    self.basis_color[i::color_list.shape[0]] = srgb_to_linear(torch.FloatTensor(color))
+                    self.basis_color[i] = srgb_to_linear(torch.FloatTensor(color))
                 else:
-                    self.basis_color[i::color_list.shape[0]] = torch.FloatTensor(color)
+                    self.basis_color[i] = torch.FloatTensor(color)
             self.basis_color = nn.Parameter(self.basis_color, requires_grad=True)
+
         self.basis_color_origin = nn.Parameter(self.basis_color.data, requires_grad=False)
+        
+        # initialize hist weights (to generate blending weight supervision)
         if hist_weights is not None:
             self.hist_weights = torch.from_numpy(hist_weights).float()
             self.hist_weights = self.hist_weights.permute(3, 0, 1, 2).unsqueeze(0)
@@ -275,6 +285,9 @@ class PaletteRenderer(nn.Module):
         self.step_counter.zero_()
         self.mean_count = 0
         self.local_step = 0
+        
+    def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, test_mode=False, **kwargs):
+        raise ValueError("Pure pytorch version is not available for now.")
 
     def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, 
                  max_steps=1024, T_thresh=1e-4, gui_mode=False, **kwargs):
@@ -310,66 +323,41 @@ class PaletteRenderer(nn.Module):
             xyzs, dirs, deltas, rays = raymarching.march_rays_train(rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, counter, self.mean_count, perturb, 128, force_all_rays, dt_gamma, max_steps)
             M = xyzs.shape[0]
 
-            #plot_pointcloud(xyzs.reshape(-1, 3).detach().cpu().numpy())
-            sigmas, clip_feat, d_color, omega, dir_color, diffuse = self(xyzs, dirs)
-            # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
-            # sigmas = density_outputs['sigma']
-            # rgbs = self.color(xyzs, dirs, **density_outputs)
+            # Predict sigma, feature and palette basis from network
+            sigmas, clip_feat, omega, offsets_radiance, view_dep, diffuse = self(xyzs, dirs)
+            
+            offsets, radiance = offsets_radiance[...,:-1], offsets_radiance[...,-1:]
             sigmas = self.density_scale * sigmas
             sigmas = sigmas.detach()
 
-            radiance = d_color[...,-1:]
-            d_color = d_color[...,:-1]
             radiance = radiance.reshape(M, 1, 1)
-            d_color = d_color.reshape(M, self.num_basis, 3)
+            offsets = offsets.reshape(M, self.num_basis, 3)
             omega = omega.reshape(M, self.num_basis, 1)
-            dir_color = dir_color.reshape(M, 3)
+            view_dep = view_dep.reshape(M, 3)
             diffuse = diffuse.reshape(M, 3)
             clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
             basis_color = self.basis_color[None,:,:].clamp(0, 1)
             if self.freeze_basis_color:
                 basis_color = basis_color.detach()
-
-            if self.opt.multiply_delta:
-                final_color = (basis_color*d_color).clamp(0, 1)
-            else:
-                if self.opt.separate_radiance:
-                    final_color = (F.softplus(radiance)*(basis_color+d_color))# .clamp(0, 1)
-                else:
-                    final_color = (basis_color+d_color)# .clamp(0, 1)
-
-            basis_rgb = omega*final_color# .clamp(0, 1) # N_rays, N_sample, N_basis, 3
-
-            rgbs = basis_rgb.sum(dim=-2) + dir_color.detach() # (N_rays, N_samples_, 3)
-
-            #print(f'valid RGB query ratio: {mask.sum().item() / mask.shape[0]} (total = {mask.sum().item()})')
+                
+            # Compositing palette basis
+            final_color = (F.softplus(radiance)*(basis_color+offsets))
+            basis_rgb = omega*final_color # (N_rays, N_sample, N_basis, 3)
+            rgbs = basis_rgb.sum(dim=-2) + view_dep.detach() # (N_rays, N_samples_, 3)
+            direct_rgb = diffuse+view_dep # (N_rays, N_samples_, 3)
 
             weights_sum, depth, image = raymarching.composite_rays_train(sigmas, rgbs, deltas, rays, T_thresh)
 
-            omega_norm = omega[...,0].sum(dim=-1, keepdim=True)/((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
-            direct_rgb = diffuse+dir_color
-            basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
-            if self.opt.use_cosine_distance:
-                if self.opt.multiply_delta:
-                    delta_rgb_norm = cos_distance(d_color, (d_color*0+1).detach()).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-                else:
-                    delta_rgb_norm = cos_distance(final_color, basis_color).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-            else:
-                delta_rgb_norm = (d_color**2).sum(dim=-1).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-            dir_rgb_norm = (dir_color**2).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
-
-            # _, _, direct_rgb_map = raymarching.composite_rays_train(sigmas, direct_rgb, deltas, rays, T_thresh)
-
-            # _, _, dir_rgb_map = raymarching.composite_rays_train(sigmas, dir_color, deltas, rays, T_thresh)
-            # norm_rgb = torch.cat([omega_norm, delta_rgb_norm, dir_rgb_norm], dim=-1)
-            # _, _, norm_rgb_map = raymarching.composite_rays_train(sigmas, norm_rgb, deltas, rays, T_thresh)
-            # omega_norm_map, delta_rgb_norm_map, dir_rgb_norm_map = norm_rgb_map.permute(1, 0)
-
+            # calculating norms as losses
+            omega_sparsity = omega[...,0].sum(dim=-1, keepdim=True) / ((omega[...,0]**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
+            offsets_norm = (offsets**2).sum(dim=-1).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
+            view_dep_norm = (view_dep**2).sum(dim=-1, keepdim=True) # (N_rays, N_samples_, 1)
             if self.require_smooth_loss:
+                # add perturbations on points
                 xyzs_diff = (xyzs + torch.rand_like(xyzs) * self.bound * 0.03).clamp(-self.bound, self.bound)
                 xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.07)**2 
-                _, clip_feat_diff, _, omega_diff, _, diffuse_diff =  self(xyzs_diff, dirs)
+                _, clip_feat_diff, omega_diff, _, _, diffuse_diff =  self(xyzs_diff, dirs)
                 omega_diff = omega_diff.reshape(M, self.num_basis, 1)
                 diffuse_diff = diffuse_diff.reshape(M, 3)
                 
@@ -378,35 +366,24 @@ class PaletteRenderer(nn.Module):
                 else:
                     clip_weight = 0
 
-                # if self.opt.separate_radiance:
-                #     rgb_weight = cos_distance(diffuse, diffuse_diff, zero_protect=True)[...,None]  / self.opt.sigma_color
-                # elif self.opt.use_cosine_distance:
-                #     rgb_weight = cos_distance(diffuse+0.05, diffuse_diff+0.05)[...,None] / self.opt.sigma_color
-                # else:
                 rgb_weight = (diffuse-diffuse_diff).norm(dim=-1, keepdim=True)**2 / self.opt.sigma_color # (N_rays, N_samples_, 1)
                 
-                smooth_weight = (xyzs_weight + rgb_weight + clip_weight).detach()
-                smooth_weight = torch.exp(-smooth_weight)
+                smooth_weight = torch.exp(- xyzs_weight - rgb_weight - clip_weight).detach()
                 smooth_norm = ((omega_diff-omega)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight
             else: 
-                smooth_norm = torch.zeros_like(omega_norm)
-            # basis_acc_map_list = []
-            # for i in range(0, self.opt.num_basis, 3):
-            #     st = min(self.opt.num_basis-3, i)
-            #     ln = 3-min(3, self.opt.num_basis-i)
-            #     basis_acc = omega[...,st:st+3,0]         
-            #     _, _, basis_acc_map = raymarching.composite_rays_train(sigmas, basis_acc, deltas, rays, T_thresh)
-            #     basis_acc_map_list.append(basis_acc_map[...,ln:])
-            # basis_acc_map = torch.cat(basis_acc_map_list, dim=-1)
+                smooth_norm = torch.zeros_like(omega_sparsity)
 
-            all_buffer = torch.cat([omega_norm, dir_rgb_norm, delta_rgb_norm, smooth_norm, 
-                                    dir_color, direct_rgb, diffuse, clip_feat, omega[...,0]], axis=-1)
+            # Concatenate all buffers and composite them in a single pass 
+            all_buffer = torch.cat([omega_sparsity, view_dep_norm, offsets_norm, smooth_norm, 
+                                    view_dep, direct_rgb, diffuse, clip_feat, omega[...,0]], axis=-1)
             all_map = raymarching.composite_rays_flex_train(sigmas, all_buffer, deltas, rays, T_thresh)
-            omega_norm_map = all_map[...,0:1]
-            dir_rgb_norm_map = all_map[...,1:2]
-            delta_rgb_norm_map = all_map[...,2:3]
+            
+            # Dispatch the composed pixel maps
+            omega_sparsity_map = all_map[...,0:1]
+            view_dep_norm_map = all_map[...,1:2]
+            offsets_norm_map = all_map[...,2:3]
             smooth_norm_map = all_map[...,3:4]
-            dir_rgb_map = all_map[...,4:7]
+            view_dep_rgb_map = all_map[...,4:7]
             direct_rgb_map = all_map[...,7:10]
             diffuse_rgb_map = all_map[...,10:13]
             clip_feat_map = all_map[...,13:13+self.opt.clip_dim]
@@ -416,13 +393,13 @@ class PaletteRenderer(nn.Module):
             depth = torch.clamp(depth - nears, min=0) / (fars - nears)
             image = image.view(*prefix, 3)
             depth = depth.view(*prefix)
-
             direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
-            omega_norm_map = omega_norm_map.view(*prefix)
-            dir_rgb_norm_map = dir_rgb_norm_map.view(*prefix)
-            delta_rgb_norm_map = delta_rgb_norm_map.view(*prefix)
+            
+            omega_sparsity_map = omega_sparsity_map.view(*prefix)
+            view_dep_norm_map = view_dep_norm_map.view(*prefix)
+            offsets_norm_map = offsets_norm_map.view(*prefix)
             smooth_norm_map = smooth_norm_map.view(*prefix)
-            dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+            view_dep_rgb_map = view_dep_rgb_map.view(*prefix, 3)
             direct_rgb_map = direct_rgb_map.view(*prefix, 3)
             diffuse_rgb_map = diffuse_rgb_map.view(*prefix, 3)
             clip_feat_map = clip_feat_map.view(*prefix, self.opt.clip_dim)
@@ -431,12 +408,16 @@ class PaletteRenderer(nn.Module):
             results['depth'] = depth
             results['image'] = image
             results['weights_sum'] = weights_sum
+            
             results['smooth_norm'] = smooth_norm_map
-            results['omega_norm'] = omega_norm_map
-            results['dir_norm'] = dir_rgb_norm_map
-            results['delta_norm'] = delta_rgb_norm_map
+            results['omega_sparsity'] = omega_sparsity_map
+            results['view_dep_norm'] = view_dep_norm_map
+            results['offsets_norm'] = offsets_norm_map
+            
             results['direct_rgb'] = direct_rgb_map
+            results['view_dep_rgb'] = view_dep_rgb_map
             results['diffuse_rgb'] = diffuse_rgb_map
+            
             results['clip_feat'] = clip_feat_map
             results['basis_acc'] = basis_acc_map
         else:
@@ -450,7 +431,7 @@ class PaletteRenderer(nn.Module):
             depth = torch.zeros(N, dtype=dtype, device=device)
             image = torch.zeros(N, 3, dtype=dtype, device=device)
             
-            dir_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
+            view_dep_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
             direct_rgb_map = torch.zeros(N, 3, dtype=dtype, device=device)
             basis_rgb_map = torch.zeros(N, 3*self.opt.num_basis, dtype=dtype, device=device)
             unscaled_basis_rgb_map = torch.zeros(N, 3*self.opt.num_basis, dtype=dtype, device=device)
@@ -478,37 +459,32 @@ class PaletteRenderer(nn.Module):
                 xyzs, dirs, deltas = raymarching.march_rays(n_alive, n_step, rays_alive, rays_t, rays_o, rays_d, self.bound, self.density_bitfield, self.cascade, self.grid_size, nears, fars, 128, perturb if step == 0 else False, dt_gamma, max_steps)
                 M = xyzs.shape[0]
 
-                sigmas, clip_feat, d_color, omega, dir_color, diffuse = self(xyzs, dirs)
-                radiance = d_color[...,-1:]
-                d_color = d_color[...,:-1]
+                sigmas, clip_feat, omega, offsets_radiance, view_dep, diffuse = self(xyzs, dirs)
+                offsets, radiance = offsets_radiance[...,:-1], offsets_radiance[...,-1:]
+                
                 radiance = radiance.reshape(M, 1, 1)
-                d_color = d_color.reshape(M, self.num_basis, 3)
+                offsets = offsets.reshape(M, self.num_basis, 3)
                 omega = omega.reshape(M, self.num_basis, 1)
-                dir_color = dir_color.reshape(M, 3)
+                view_dep = view_dep.reshape(M, 3)
                 diffuse = diffuse.reshape(M, 3)
                 clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
                 basis_color = self.basis_color[None,:,:].clamp(0, 1)
-                if self.stylizer is not None:
-                    rgbs = self.stylizer(radiance, omega, basis_color, d_color, dir_color)
+                
+                if self.stylizer is not None: # Photorealistic style transfer
+                    rgbs = self.stylizer(radiance, omega, basis_color, offsets, view_dep)
                 else:
-                    if self.opt.multiply_delta:
-                        final_color = (basis_color*d_color).clamp(0, 1)
-                    else:
-                        if self.opt.separate_radiance:
-                            final_color = (F.softplus(radiance)*(basis_color+d_color))# .clamp(0, 1)
-                        else:
-                            final_color = (basis_color+d_color)# .clamp(0, 1)
-                        unscaled_final_color = (basis_color+d_color)# .clamp(0, 1)
+                    final_color = (F.softplus(radiance)*(basis_color+offsets))# .clamp(0, 1)
+                    unscaled_final_color = (basis_color+offsets)# .clamp(0, 1)
 
-                        
-                    if self.edit is not None:
+                    if self.edit is not None: # filtered appearence editing
                         final_color = self.edit(final_color, xyzs, clip_feat)
                     
                     basis_rgb = omega*final_color # .clamp(0, 1) # N_rays, N_sample, N_basis, 3
                     unscaled_basis_rgb = omega*unscaled_final_color
 
-                    rgbs = basis_rgb.sum(dim=-2) + self.dir_weight * dir_color # (N_rays, N_samples_, 3)
+                    # adding view dependent color with editable scale
+                    rgbs = basis_rgb.sum(dim=-2) + self.view_dep_weight * view_dep # (N_rays, N_samples_, 3)
 
                 # density_outputs = self.density(xyzs) # [M,], use a dict since it may include extra things, like geo_feat for rgb.
                 # sigmas = density_outputs['sigma']
@@ -518,13 +494,12 @@ class PaletteRenderer(nn.Module):
                 if not gui_mode:
                     ### palette parts
 
-                    # dir_Color, direct_rgb, basis_rgb
-                    direct_rgb = diffuse+dir_color
+                    direct_rgb = diffuse+view_dep
                     basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
                     unscaled_basis_rgb = unscaled_basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
                     
                     raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, direct_rgb, deltas, weights_sum, direct_rgb_map, T_thresh)
-                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, dir_color, deltas, weights_sum, dir_rgb_map, T_thresh)
+                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, view_dep, deltas, weights_sum, dir_rgb_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis, rays_alive, rays_t, sigmas, omega, deltas, weights_sum, basis_acc_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, basis_rgb, deltas, weights_sum, basis_rgb_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, unscaled_basis_rgb, deltas, weights_sum, unscaled_basis_rgb_map, T_thresh)

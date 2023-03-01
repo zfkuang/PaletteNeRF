@@ -12,7 +12,6 @@ from loss import huber_loss
 #torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
     parser.add_argument('nerf_path', type=str)

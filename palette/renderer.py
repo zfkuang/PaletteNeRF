@@ -92,9 +92,9 @@ class RegionEdit(nn.Module):
         self.delta_hsv = torch.zeros(self.opt.num_basis, 3)
         self.delta_hsv[...,1:3] = 1
 
-    def update_cent(self, mean_xyz, mean_clip):     
-        self.mean_xyz = mean_xyz[None,...]
-        self.mean_clip = mean_clip[None,...]
+    def update_cent(self, mean_xyz=None, mean_clip=None):     
+        self.mean_xyz = None if mean_xyz is None else mean_xyz[None,...]
+        self.mean_clip = None if mean_clip is None else mean_clip[None,...]
     
     def update_std(self, std_xyz=None, std_clip=None):
         if std_xyz is not None:

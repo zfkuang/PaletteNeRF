@@ -75,7 +75,9 @@ class PaletteGUI:
 
         self.render_buffer = np.zeros((self.W, self.H, 3), dtype=np.float32)
         self.selected_point = None
-        self.selected_pixel = None 
+        self.selected_pixel = None
+        self.xyz = None
+        self.clip_feat = None
         self.need_update = True # camera moved, should reset accumulation
         self.spp = 1 # sample per pixel
         self.mode = 'image' # choose from ['image', 'depth']
@@ -217,10 +219,10 @@ class PaletteGUI:
                 y, x = self.selected_pixel
                 self.xyz = torch.from_numpy(outputs['xyz'][x, y]).type_as(self.palette)
                 self.clip_feat = torch.from_numpy(outputs['clip_feat'][x, y]).type_as(self.palette)
-                if self.xyz.isnan().sum() == 0: # valid point
-                    self.trainer.model.edit.update_cent(self.xyz, self.clip_feat)
-                    self.selected_point = self.xyz
+                self.selected_point = self.xyz
                 self.selected_pixel = None
+            if self.xyz is None or self.xyz.isnan().sum() == 0: # valid point
+                self.trainer.model.edit.update_cent(self.xyz, self.clip_feat)
             # depth = outputs['depth']
             # clip_feature = outputs['clip_feature']
             # import pdb
@@ -759,6 +761,8 @@ class PaletteGUI:
             print("Unselecting point")
             self.selected_point = None
             self.selected_pixel = None
+            self.xyz = None
+            self.clip_feat = None
             self.style_pixel = None
             self.need_update = True
 
@@ -773,7 +777,7 @@ class PaletteGUI:
             dpg.add_mouse_drag_handler(button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan)
 
 
-        dpg.create_viewport(title='torch-ngp', width=self.W+400+400, height=self.H, resizable=False)
+        dpg.create_viewport(title='', width=self.W+400+400, height=self.H, resizable=False)
         
         # TODO: seems dearpygui doesn't support resizing texture...
         # def callback_resize(sender, app_data):

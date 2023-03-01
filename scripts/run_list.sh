@@ -11,6 +11,7 @@
 # bash scripts/room.sh -m nerf
 # bash scripts/ficus.sh -m nerf
 # bash scripts/ship.sh -m nerf
+bash scripts/drums.sh -m nerf
 
 # bash scripts/orchids.sh -m extract
 # bash scripts/hotdog.sh -m extract
@@ -24,6 +25,7 @@
 # bash scripts/room.sh -m extract
 # bash scripts/ficus.sh -m extract
 # bash scripts/ship.sh -m extract
+bash scripts/drums.sh -m extract
 
 # bash scripts/orchids.sh -m palette
 # bash scripts/fern.sh -m palette
@@ -37,7 +39,8 @@
 # bash scripts/room.sh -m palette
 # bash scripts/ficus.sh -m palette
 # bash scripts/ship.sh -m palette
+bash scripts/drums.sh -m palette
 
-bash scripts/room_lseg.sh -m palette
-bash scripts/kitchen_lseg.sh -m palette
-bash scripts/bonsai_lseg.sh -m palette
+# bash scripts/room_lseg.sh -m palette
+# bash scripts/kitchen_lseg.sh -m palette
+# bash scripts/bonsai_lseg.sh -m palette

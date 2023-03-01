@@ -64,33 +64,22 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
-    ### Palette 
+    ### Palette Extraction options
     parser.add_argument('--extract_palette', action='store_true', help="extract palette")
+    parser.add_argument('--use_normalized_palette', action='store_true', help="use palette with normalized input")
     parser.add_argument('--error_thres', type=float, default=5.0/255, help='error threshold for palette extraction')
     parser.add_argument('--update_grid', action='store_true', help="update density grid")
     parser.add_argument("--num_basis", type=int, default=12, help='number of basis')
     parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
 
-    # Adobe Hybrid options   
-    parser.add_argument('--use_normalized_palette', action='store_true', help="use_normalized palette")
-    parser.add_argument('--use_cosine_distance', action='store_true', help="use cosine distance")
-    parser.add_argument('--separate_radiance', action='store_true', help="use radiance from a separated output")
+    # PaletteNeRF options   
     parser.add_argument('--continue_training', action='store_true', help="continue training")
-    parser.add_argument('--multiply_delta', action='store_true', help="multiply basis color with delta color")
-    
-    # parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
-    # parser.add_argument("--lambda_smooth", type=float, default=2e-3, help='weight of smooth loss')
-    # parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
-    # parser.add_argument("--lambda_delta", type=float, default=0.04, help='weight of delta color loss')
-    # parser.add_argument("--lambda_weight", type=float, default=0.2, help='weight of weight loss')
-    # parser.add_argument("--lambda_palette", type=float, default=0.005, help='weight of weight loss')
-    # parser.add_argument("--smooth_epoch", type=int, default=100, help='number of maximum epoch before add smooth loss')
     
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
     parser.add_argument("--lambda_smooth", type=float, default=4e-3, help='weight of smooth loss')
     parser.add_argument("--lambda_patchsmooth", type=float, default=0, help='weight of smooth loss')
-    parser.add_argument("--lambda_dir", type=float, default=0.1, help='weight of dir loss')
-    parser.add_argument("--lambda_delta", type=float, default=0.03, help='weight of delta color loss')
+    parser.add_argument("--lambda_view_dep", type=float, default=0.1, help='weight of view dependent color regularity loss')
+    parser.add_argument("--lambda_offsets", type=float, default=0.03, help='weight of color offsets regularity loss')
     parser.add_argument("--lambda_weight", type=float, default=0.05, help='weight of weight loss')
     parser.add_argument("--lambda_palette", type=float, default=0.001, help='weight of weight loss')
     parser.add_argument("--smooth_epoch", type=int, default=30, help='number of maximum epoch before add smooth loss')
@@ -179,7 +168,7 @@ if __name__ == '__main__':
         trainer = PaletteTrainer('palette', opt, model, device=device, 
                 fp16=opt.fp16, workspace=palette_workspace, nerf_path=opt.nerf_path)
         train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
-        trainer.sample_rays(train_loader) # test and save video
+        trainer.extract_palette(train_loader, normalize_input=opt.use_normalized_palette) # test and save video
     elif opt.test:
         criterion = torch.nn.MSELoss(reduction='none')        
         metrics = [PSNRMeter(), SSIMMeter(device=device), LPIPSMeter(device=device), 
@@ -219,7 +208,7 @@ if __name__ == '__main__':
         if opt.use_initialization_from_rgbxy:
             model.initialize_palette(extracted_palette, extracted_hist_weights)
         else:
-            model.initialize_color(None, None)
+            model.initialize_palette(None, None)
 
         # setting the trainer
         criterion = torch.nn.MSELoss(reduction='none')

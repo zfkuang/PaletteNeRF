@@ -73,7 +73,7 @@ elif [[ $model == 'extract' ]]; then
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
     --min_near ${min_near} \
-    --extract_palette
+    --extract_palette --use_normalized_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
     $data_dir \

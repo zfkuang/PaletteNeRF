@@ -66,9 +66,9 @@ class SparsityMeter:
         
         # simplified since max_pixel_value is 1 here.
         # psnr = -10 * np.log10(np.mean((preds - truths) ** 2))
-        omega_norm = omega.sum(dim=-1, keepdim=True)/((omega**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
+        omega_sparsity = omega.sum(dim=-1, keepdim=True)/((omega**2).sum(dim=-1, keepdim=True)+1e-6)-1 # N_rays, N_sample, 1
         
-        self.V += omega_norm.mean()
+        self.V += omega_sparsity.mean()
         self.N += 1
 
     def measure(self):
@@ -169,9 +169,12 @@ def palette_extraction(
     output_dir: str,
     tau: float = 8e-3,
     palette_size = None,
-    use_normalize = False,
+    normalize_input = False,
     error_thres = 5.0 / 255.0
 ):
+    '''
+        Extract palettes with the RGBXY method
+    '''
     assert palette_size is None or palette_size >= 4 ## convex hull should have at least 4 vertices
     print(f'extracting palette with {palette_size} colors')
 
@@ -231,7 +234,7 @@ def palette_extraction(
         target_size=palette_size)
     _, hist_rgb = compute_RGB_histogram(colors, weights, bits_per_channel=5)
     
-    if use_normalize:
+    if normalize_input:
         hist_rgb = hist_rgb + 0.05
         hist_rgb_norm = np.linalg.norm(hist_rgb, axis=-1, keepdims=True) #.clip(min=0.1)
         hist_rgb = hist_rgb / hist_rgb_norm
@@ -250,6 +253,7 @@ def palette_extraction(
     np.savez(os.path.join(output_dir, 'palette.npz'), palette=palette_rgb)
     np.savez(os.path.join(output_dir, 'hist_weights.npz'), hist_weights=hist_weights)
 
+# CUDA-based rgb,hsv conversion for speed-up
 class _rgb_to_hsv(Function):
     @staticmethod
     @custom_fwd(cast_inputs=torch.float32)
@@ -427,12 +431,6 @@ class PaletteTrainer(object):
             self.log(f"[INFO] Loading NeRF at {self.nerf_path} ...")
             self.load_nerf_checkpoint(self.nerf_path)
              
-        # clip loss prepare
-        if opt.rand_pose >= 0: # =0 means only using CLIP loss, >0 means a hybrid mode.
-            from nerf.clip_utils import CLIPLoss
-            self.clip_loss = CLIPLoss(self.device)
-            self.clip_loss.prepare_text([self.opt.clip_text]) # only support one text prompt now...
-
     def __del__(self):
         if self.log_ptr: 
             self.log_ptr.close()
@@ -453,11 +451,8 @@ class PaletteTrainer(object):
         rays_d = data['rays_d'] # [B, N, 3]
 
         images = data['images'] # [B, N, 3/4]
-        if self.opt.pred_clip:
-            if len(self.opt.ablation_name) > 0: # ablation mode, only to check the memory, no need to train
-                gt_clip_feat = torch.zeros(rays_o.shape[0], rays_o.shape[1], self.opt.clip_dim, device=rays_o.device)
-            else:            
-                gt_clip_feat = data['feat_images']
+        if self.opt.pred_clip:     
+            gt_clip_feat = data['feat_images']
 
         B, N, C = images.shape
 
@@ -495,42 +490,8 @@ class PaletteTrainer(object):
         if self.opt.pred_clip:
             pred_clip_feat = outputs['clip_feat']
             loss_clip_feat = self.criterion(pred_clip_feat, gt_clip_feat).mean()
-
-        # patch-based rendering
-        # smooth_patch_loss = 0
-        # if self.opt.patch_size > 1 and self.require_smooth_loss == True:
-        #     diffuse_patch = outputs['diffuse_rgb'].view(-1, self.opt.patch_size, self.opt.patch_size, 3)
-        #     # gt_rgb_patch = gt_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
-        #     # pred_rgb = pred_rgb.view(-1, self.opt.patch_size, self.opt.patch_size, 3).permute(0, 3, 1, 2).contiguous()
-
-        #     # torch_vis_2d(gt_rgb[0])
-        #     # torch_vis_2d(pred_rgb[0])
-
-        #     # LPIPS loss [not useful...]
-        #     # loss = loss + 1e-3 * self.criterion_lpips(pred_rgb, gt_rgb)
-        #     if self.opt.lambda_patchsmooth > 0:
-        #         omega_patch = outputs['basis_acc'].reshape(-1, self.opt.patch_size, self.opt.patch_size, self.opt.num_basis)
-        #         pixel_patch = torch.range(0, self.opt.patch_size-1, dtype=torch.float32, device=diffuse_patch.device)
-        #         pixel_patch = torch.stack(torch.meshgrid(pixel_patch, pixel_patch), dim=-1)[None,...] # 1 x pa x pa x 2
-        #         pixel_patch = pixel_patch.repeat(diffuse_patch.shape[0], 1, 1, 1) # M x pa x pa x 2
-                
-        #         diffuse_patch = diffuse_patch.reshape(diffuse_patch.shape[0], -1, 3) 
-        #         omega_patch = omega_patch.reshape(omega_patch.shape[0], -1, self.opt.num_basis) 
-        #         pixel_patch = pixel_patch.reshape(pixel_patch.shape[0], -1, 2) 
-                
-        #         perm = torch.randperm(self.opt.patch_size**2)
-        #         diffuse_diffpatch = diffuse_patch[:, perm]
-        #         omega_diffpatch = omega_patch[:, perm]
-        #         pixel_diffpatch = pixel_patch[:, perm]
-                
-        #         xyzs_weight_patch = (pixel_patch-pixel_diffpatch).norm(dim=-1, keepdim=True)**2 / 1
-        #         rgb_weight_patch = (diffuse_patch-diffuse_diffpatch).norm(dim=-1, keepdim=True)**2 / self.opt.sigma_color # (N_rays, N_samples_, 1)
-                
-        #         smooth_weight_patch = (xyzs_weight_patch + rgb_weight_patch).detach()
-        #         smooth_weight_patch = torch.exp(-smooth_weight_patch)
-        #         smooth_patch_norm = ((omega_patch-omega_diffpatch)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight_patch
-        #         smooth_patch_loss = smooth_patch_norm.mean()         
           
+        # patch-based smooth loss (optional) 
         smooth_patch_loss = 0
         if self.opt.random_size > 0 and self.require_smooth_loss == True and self.opt.lambda_patchsmooth > 0 and 'inds' in data.keys():
             diffuse = outputs['diffuse_rgb'].reshape(-1, 3) # N x 3
@@ -555,15 +516,18 @@ class PaletteTrainer(object):
             smooth_patch_loss = smooth_patch_norm.mean()        
                 
         loss_dict = {}
-        pred_omega = outputs['omega_norm']
-        sparsity_loss = pred_omega.mean()
+        
+        # Regularizations
+        pred_omega_sparsity = outputs['omega_sparsity']
+        sparsity_loss = pred_omega_sparsity.mean()
 
-        pred_delta_color = outputs['delta_norm']
-        delta_loss = pred_delta_color.mean()
+        pred_offsets_norm = outputs['offsets_norm']
+        offsets_loss = pred_offsets_norm.mean()
 
-        pred_dir_color = outputs['dir_norm']
-        dir_loss = pred_dir_color.mean()
+        pred_view_dep_norm = outputs['view_dep_norm']
+        view_dep_loss = pred_view_dep_norm.mean()
 
+        # Blending weights supervision
         pred_weights = outputs['basis_acc']
         if gt_weights is not None:
             weights_guide_loss = ((gt_weights-pred_weights)**2).mean()
@@ -581,11 +545,11 @@ class PaletteTrainer(object):
         loss_dict['loss_sparsity'] = self.opt.lambda_sparsity * sparsity_loss
         loss += loss_dict['loss_sparsity']
 
-        loss_dict['loss_delta'] =  self.opt.lambda_delta * delta_loss
-        loss += loss_dict['loss_delta']
+        loss_dict['loss_offsets'] =  self.opt.lambda_offsets * offsets_loss
+        loss += loss_dict['loss_offsets']
 
-        loss_dict['loss_dir'] =  self.opt.lambda_dir * dir_loss
-        loss += loss_dict['loss_dir']
+        loss_dict['loss_view_dep'] =  self.opt.lambda_view_dep * view_dep_loss
+        loss += loss_dict['loss_view_dep']
 
         loss_dict['loss_smooth'] =  self.opt.lambda_smooth * smooth_loss
         loss += loss_dict['loss_smooth']
@@ -597,7 +561,6 @@ class PaletteTrainer(object):
         loss += loss_dict['loss_palette']
 
         loss_dict['loss_weight'] =  self.lambda_weight * weights_guide_loss
-        loss_dict['loss_weight_norm'] =  self.opt.lambda_weight * weights_guide_loss
         loss += loss_dict['loss_weight']
 
         loss_dict['loss_direct'] = loss_direct
@@ -692,12 +655,6 @@ class PaletteTrainer(object):
             self.lambda_weight = self.opt.lambda_weight * max(0, (1 - epoch/self.opt.lweight_decay_epoch))
 
             self.train_one_epoch(train_loader)
-            # if epoch >= 3:
-            #     print("torch.cuda.memory_allocated: %fGB"%(torch.cuda.memory_allocated(0)/1024/1024/1024))
-            #     print("torch.cuda.memory_reserved: %fGB"%(torch.cuda.memory_reserved(0)/1024/1024/1024))
-            #     print("torch.cuda.max_memory_reserved: %fGB"%(torch.cuda.max_memory_reserved(0)/1024/1024/1024))
-            #     import pdb
-            #     pdb.set_trace()
                 
             if self.workspace is not None and self.local_rank == 0:
                 self.save_checkpoint(full=True, best=False)
@@ -706,9 +663,12 @@ class PaletteTrainer(object):
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
             
+            # Release the palettes from the initialzed value
             if epoch >= self.opt.max_freeze_palette_epoch or not self.opt.use_initialization_from_rgbxy:
                 self.model.freeze_basis_color = False
                 self.lambda_palette = self.opt.lambda_palette
+                
+            # Add smooth loss after a few epochs
             if epoch >= self.opt.smooth_epoch:
                 self.require_smooth_loss = True
                 self.model.require_smooth_loss = True
@@ -869,7 +829,7 @@ class PaletteTrainer(object):
                         else:
                             metric.update(preds, truths)
                         
-                    # TODO: add evaluation here
+                    # Render evaluation images/passes
                     if save_images:
                         # save image
                         save_path = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_rgb.png')
@@ -880,7 +840,7 @@ class PaletteTrainer(object):
                         save_path_basis_acc = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_acc.png')
                         save_path_basis_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_basis_color.png')
                         save_path_unscaled_basis_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_unscaled_basis_color.png')
-                        save_path_dir_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_dir_color.png')
+                        save_path_view_dep_color = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_view_dep_color.png')
                         save_path_clip_feat = os.path.join(self.workspace, 'validation', f'{name}_{self.local_step:04d}_clip_feat.png')
 
                         #self.log(f"==> Saving validation image to {save_path}")
@@ -898,9 +858,9 @@ class PaletteTrainer(object):
                         pred = (pred.clip(0,1) * 255).astype(np.uint8)
                         pred_depth = preds_depth[0].detach().cpu().numpy()
                         pred_depth = (pred_depth * 255).astype(np.uint8)
-                        pred_dir_color = outputs['dir_rgb'][0].detach().cpu().numpy()
-                        pred_dir_color = pred_dir_color.reshape(pred.shape[0], pred.shape[1], 3)
-                        pred_dir_color = (pred_dir_color.clip(0,1) * 255).astype(np.uint8)
+                        pred_view_dep_color = outputs['view_dep_rgb'][0].detach().cpu().numpy()
+                        pred_view_dep_color = pred_view_dep_color.reshape(pred.shape[0], pred.shape[1], 3)
+                        pred_view_dep_color = (pred_view_dep_color.clip(0,1) * 255).astype(np.uint8)
                         pred_direct_color = outputs['direct_rgb'][0].detach().cpu().numpy()
                         pred_direct_color = pred_direct_color.reshape(pred.shape[0], pred.shape[1], 3)
                         pred_direct_color = (pred_direct_color.clip(0,1) * 255).astype(np.uint8)
@@ -930,8 +890,6 @@ class PaletteTrainer(object):
 
                             basis_color = self.model.basis_color[i,None,None,:].repeat(100, 100, 1)
                             basis_color = basis_color.clamp(0, 1)
-                            # basis_color = basis_color/(basis_color.norm(dim=-1, keepdim=True)+1e-6).detach()
-                            # basis_color = lab_to_rgb(torch.concatenate([basis_color[...,:1]*0+75, basis_color[...,1:]], dim=-1))
                             pred_basis_color.append(basis_color.detach().cpu().numpy())
 
                         pred_basis_img = (np.concatenate(pred_basis_img, axis=1).clip(0,1)*255).astype(np.uint8)
@@ -943,7 +901,7 @@ class PaletteTrainer(object):
                         cv2.imwrite(save_path_basis_acc, pred_basis_acc)
                         cv2.imwrite(save_path_basis_color, cv2.cvtColor(pred_basis_color, cv2.COLOR_RGB2BGR))
                         cv2.imwrite(save_path_unscaled_basis_color, cv2.cvtColor(pred_unscaled_basis_color, cv2.COLOR_RGB2BGR))
-                        cv2.imwrite(save_path_dir_color, cv2.cvtColor(pred_dir_color, cv2.COLOR_RGB2BGR))
+                        cv2.imwrite(save_path_view_dep_color, cv2.cvtColor(pred_view_dep_color, cv2.COLOR_RGB2BGR))
                         
                         cv2.imwrite(save_path, cv2.cvtColor(pred, cv2.COLOR_RGB2BGR))
                         if gt_weights is not None:
@@ -1018,7 +976,7 @@ class PaletteTrainer(object):
             all_preds_basis_img = []
             all_preds_basis_acc = []
             all_preds_basis_color = []
-            all_preds_dir_color = []
+            all_preds_view_dep_color = []
 
         with torch.no_grad():
 
@@ -1043,10 +1001,11 @@ class PaletteTrainer(object):
                 pred_depth = outputs['preds_depth'][0].reshape(H, W).detach().cpu().numpy()
                 pred_depth = (pred_depth * 255).astype(np.uint8)
                 
+                # prepare results of all testing frames
                 if not self.opt.gui:
-                    pred_dir_color = outputs['dir_rgb'][0].reshape(H, W, 3)
-                    pred_dir_color = pred_dir_color.detach().cpu().numpy()
-                    pred_dir_color = (pred_dir_color.clip(0, 1) * 255).astype(np.uint8)
+                    pred_view_dep_color = outputs['view_dep_rgb'][0].reshape(H, W, 3)
+                    pred_view_dep_color = pred_view_dep_color.detach().cpu().numpy()
+                    pred_view_dep_color = (pred_view_dep_color.clip(0, 1) * 255).astype(np.uint8)
 
                     pred_basis_img = []
                     pred_basis_acc = []
@@ -1070,13 +1029,13 @@ class PaletteTrainer(object):
                         all_preds_basis_img.append(pred_basis_img)
                         all_preds_basis_acc.append(pred_basis_acc)
                         all_preds_basis_color.append(pred_basis_color)
-                        all_preds_dir_color.append(pred_dir_color)
+                        all_preds_view_dep_color.append(pred_view_dep_color)
 
                     else:
                         imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_img.png'), pred_basis_img)
                         imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_acc.png'), pred_basis_acc)
                         imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_basis_color.png'), pred_basis_color)
-                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_dir_color.png'), pred_dir_color)
+                        imageio.imwrite(os.path.join(save_path, f'{name}_{t:04d}_view_dep_color.png'), pred_view_dep_color)
 
                 if write_video:
                     all_preds.append(pred)
@@ -1102,7 +1061,7 @@ class PaletteTrainer(object):
                 all_preds_basis_img = np.stack(all_preds_basis_img, axis=0)
                 all_preds_basis_acc = np.stack(all_preds_basis_acc, axis=0)
                 all_preds_basis_color = np.stack(all_preds_basis_color, axis=0)
-                all_preds_dir_color = np.stack(all_preds_dir_color, axis=0)
+                all_preds_view_dep_color = np.stack(all_preds_view_dep_color, axis=0)
 
                 _, W_img = all_preds_basis_img.shape[1:3]
                 W_img = W_img//self.opt.num_basis
@@ -1112,7 +1071,7 @@ class PaletteTrainer(object):
                 mwrite(os.path.join(save_path, '%s_basis_img.mp4'%(name)), all_preds_basis_img)
                 mwrite(os.path.join(save_path, '%s_basis_acc.mp4'%(name)), all_preds_basis_acc)
                 mwrite(os.path.join(save_path, '%s_basis_color.mp4'%(name)), all_preds_basis_color)
-                mwrite(os.path.join(save_path, '%s_dir_color.mp4'%(name)), all_preds_dir_color)
+                mwrite(os.path.join(save_path, '%s_view_dep_color.mp4'%(name)), all_preds_view_dep_color)
                 for i in range(self.opt.num_basis):
                     mwrite(os.path.join(save_path, '%s_basis_%02d_img.mp4'%(name, i)), all_preds_basis_img[:, :, W_img*i:W_img*(i+1)])
                     mwrite(os.path.join(save_path, '%s_basis_%02d_acc.mp4'%(name, i)), all_preds_basis_acc[:, :, W_img*i:W_img*(i+1)])
@@ -1173,10 +1132,14 @@ class PaletteTrainer(object):
 
         return outputs
  
-    def sample_rays(self, loader, save_path=None, name=None):
-
+    def extract_palette(self, loader, normalize_input=False, save_path=None, name=None):
+        '''
+            Extract palette using RGBXY palette extraction method with the pretrained vanilla NeRF.
+        '''
         if save_path is None:
             save_path = self.workspace
+        if normalize_input:
+            save_path = save_path.replace("version", "normalized_version")
 
         if name is None:
             name = f'{self.name}_ep{self.epoch:04d}'
@@ -1217,9 +1180,9 @@ class PaletteTrainer(object):
                 if preds_weight.shape[0] == 1:
                     preds_weight = preds_weight[0]
                                 
-                if i == 0:
-                    test_img("test_norm.png", preds_norm, data['images'].shape[1], data['images'].shape[2])
-                    test_img("test.png", preds, data['images'].shape[1], data['images'].shape[2])
+                # if i == 0:
+                #     test_img("test_norm.png", preds_norm, data['images'].shape[1], data['images'].shape[2])
+                #     test_img("test.png", preds, data['images'].shape[1], data['images'].shape[2])
                     
                 valid = (preds_weight>5e-1)
                 preds = preds[valid]
@@ -1235,8 +1198,9 @@ class PaletteTrainer(object):
             colors_norm = torch.cat(all_preds_norm, dim=0).detach().cpu().numpy()
             xyzs = torch.cat(all_preds_xyz, dim=0).detach().cpu().numpy()
             input_dict = {"colors":colors_norm, "xyzs":xyzs}
-            palette_extraction(input_dict, save_path.replace("version", "normalized_version"), use_normalize=True, error_thres=self.opt.error_thres)
-
+            
+            palette_extraction(input_dict, save_path, normalize_input=normalize_input, error_thres=self.opt.error_thres)
+            
     def save_checkpoint(self, name=None, full=False, best=False, remove_old=True):
 
         if name is None:

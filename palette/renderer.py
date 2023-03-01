@@ -102,7 +102,7 @@ class RegionEdit(nn.Module):
         if std_clip is not None:
             self.std_clip = std_clip
 
-    def update_delta(self, rgb_orig, rgb_new):
+    def update_delta_hsv(self, rgb_orig, rgb_new):
         '''
             Given the original palettes' rgb and modified palettes' rgb, calculating the change in HSV Space.
             More specifically, difference in H channel and scales in S,V channel
@@ -163,24 +163,23 @@ class Stylizer(nn.Module):
         I = torch.eye(3, dtype=torch.float32, device=self.ddelta.device)[None,:,:]
         return ((torch.bmm(self.ddelta, self.ddelta.transpose(1, 2)) - I)**2).sum()
     
-    def forward(self, radiance, omega, palette, delta, dir=None):
-        assert(not self.opt.multiply_delta and self.opt.separate_radiance)
+    def forward(self, radiance, omega, palette, offsets, view_dep=None):
         
-        prefix = delta.shape[:-2]
+        prefix = offsets.shape[:-2]
         radiance = radiance.reshape(-1, 1, 1)
         omega = omega.reshape(-1, self.opt.num_basis, 1)
         palette = palette.reshape(-1, self.opt.num_basis, 3)
-        delta = delta.reshape(-1, self.opt.num_basis, 3)
+        offsets = offsets.reshape(-1, self.opt.num_basis, 3)
         
         palette = (palette+self.dP) # N x N-p x 3
-        delta = torch.einsum("npi, pij->npj", delta, self.ddelta) # N x N_p x 3
+        offsets = torch.einsum("npi, pij->npj", offsets, self.ddelta) # N x N_p x 3
     
-        basis_rgb = ((F.softplus(radiance).repeat(1, self.opt.num_basis, 1)+self.dI[None,:,None]).clamp(0)*(palette+delta)).clamp(0, 1) # N x N_p x 3
+        basis_rgb = ((F.softplus(radiance).repeat(1, self.opt.num_basis, 1)+self.dI[None,:,None]).clamp(0)*(palette+offsets)).clamp(0, 1) # N x N_p x 3
         basis_rgb = omega*basis_rgb # N, N_p, 3
         rgbs = basis_rgb.sum(dim=-2) # N, 3
         
-        if dir is not None:
-            rgbs += dir.detach() # N, 3
+        if view_dep is not None:
+            rgbs += view_dep.detach() # N, 3
         return rgbs.reshape(*prefix, 3)
     
     

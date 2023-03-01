@@ -187,7 +187,6 @@ class PaletteGUI:
                 style_scheduler.step()
                 pbar.set_description(f"Optimizing Stlization, Loss={loss:.3f}, Loss_ARAP={loss_ARAP:.3f}")
             
-            # print(stylizer.ddelta)
             print(stylizer.dP)
             self.cached_stylizer = stylizer
             if self.stylize:
@@ -223,18 +222,6 @@ class PaletteGUI:
                 self.selected_pixel = None
             if self.xyz is None or self.xyz.isnan().sum() == 0: # valid point
                 self.trainer.model.edit.update_cent(self.xyz, self.clip_feat)
-            # depth = outputs['depth']
-            # clip_feature = outputs['clip_feature']
-            # import pdb
-            # pdb.set_trace()
-            # recolor render buffer
-            # if self.palette_mode:
-            # with torch.no_grad():
-            #     render_img = torch.from_numpy(output_buffer)[None,None,:,:,[2,1,0]]*2-1
-            #     weight = torch.nn.functional.grid_sample(self.hist_weights, render_img, mode='nearest', padding_mode='zeros', align_corners=True)
-            #     weight = weight.squeeze().permute(1, 2, 0)
-            #     render_img = torch.matmul(weight, self.palette)
-            #     output_buffer = render_img.reshape(output_buffer.shape).detach().numpy()
 
             if self.need_update:
                 self.render_buffer = output_buffer
@@ -490,7 +477,7 @@ class PaletteGUI:
 
                 def refresh_palette_color():
                     highlight_color = (self.palette[self.highlight_palette_id].detach().cpu().numpy()*255).clip(0, 255).astype(np.uint8)
-                    self.trainer.model.edit.update_delta(self.origin_palette, self.palette)
+                    self.trainer.model.edit.update_delta_hsv(self.origin_palette, self.palette)
                     #self.trainer.model.basis_color.data = self.palette.type_as(self.trainer.model.basis_color.data)
                     dpg.set_value("_palette_color_editor", tuple(highlight_color))
 
@@ -517,24 +504,24 @@ class PaletteGUI:
 
                 def callback_reset_palette(sender, app_data):
                     self.palette = self.origin_palette.clone()
-                    self.trainer.model.dir_weight = 1
+                    self.trainer.model.view_dep_weight = 1
                     refresh_palette_color()
                     self.need_update = True
                     
                 dpg.add_button(label="reset", tag="_button_reset_palette", callback=callback_reset_palette)
                 dpg.bind_item_theme("_button_reset_palette", theme_button)
                 
-                def call_back_set_delta_weight(sender, app_data):
-                    self.trainer.model.delta_weight = app_data
+                def call_back_set_offsets_weight(sender, app_data):
+                    self.trainer.model.offsets_weight = app_data
                     self.need_update = True
-                dpg.add_slider_float(label="delta_weight", min_value=0, max_value=20, format="%f", 
-                                    default_value=1, callback=call_back_set_delta_weight)
+                dpg.add_slider_float(label="offsets_weight", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_offsets_weight)
                 
-                def call_back_set_dir_weight(sender, app_data):
-                    self.trainer.model.dir_weight = app_data
+                def call_back_set_view_dep_weight(sender, app_data):
+                    self.trainer.model.view_dep_weight = app_data
                     self.need_update = True
-                dpg.add_slider_float(label="dir_weight", min_value=0, max_value=20, format="%f", 
-                                    default_value=1, callback=call_back_set_dir_weight)
+                dpg.add_slider_float(label="view_dep_weight", min_value=0, max_value=20, format="%f", 
+                                    default_value=1, callback=call_back_set_view_dep_weight)
                 
                 def callback_set_palette_id(sender, app_data):
                     self.highlight_palette_id = app_data                    

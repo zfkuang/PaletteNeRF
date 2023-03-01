@@ -118,7 +118,6 @@ elif [[ $model == 'palette' ]]; then
     --density_thresh ${density_thresh} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
-    --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
     --dt_gamma 0 \

@@ -88,7 +88,6 @@ elif [[ $model == 'palette' ]]; then
     --min_near ${min_near} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
-    --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
     --datatype ${datatype} \

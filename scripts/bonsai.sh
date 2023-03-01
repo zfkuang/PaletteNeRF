@@ -11,7 +11,7 @@ lambda_sparse=0.00
 iters=90000
 min_near=0.2
 random_size=0
-data_dir='../data/mip360/bonsai'
+data_dir='./data/mip360/bonsai'
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -90,7 +90,6 @@ elif [[ $model == 'palette' ]]; then
     --min_near ${min_near} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
-    --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
     --datatype ${datatype} \

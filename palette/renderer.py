@@ -234,7 +234,7 @@ class PaletteRenderer(nn.Module):
             self.mean_count = 0
             self.local_step = 0
 
-    def initialize_color(self, color_list=None, hist_weights=None):
+    def extracted_palette(self, color_list=None, hist_weights=None):
         if color_list is None:
             if self.basis_color is None:
                 self.basis_color = torch.zeros([self.num_basis, 3]) + 0.5

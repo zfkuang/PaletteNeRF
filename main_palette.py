@@ -20,6 +20,7 @@ if __name__ == '__main__':
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--video', action='store_true', help="video mode")
     parser.add_argument('--seed', type=int, default=0)
+    parser.add_argument('--version_id', type=int, default=-1, help="palettenerf's version id")
 
     ### training options
     parser.add_argument('--iters', type=int, default=30000, help="training iters")
@@ -99,7 +100,6 @@ if __name__ == '__main__':
     parser.add_argument("--sigma_color", type=float, default=0.2, help='sigma of color (used in smooth loss)')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
-    parser.add_argument("--model_mode", type=str, choices=["nerf", "palette"], default="nerf", help='type of model')
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
     # CLIP feat options
@@ -119,26 +119,35 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
+
     palette_workspace=opt.nerf_path.replace("results", "results_palette")
     if opt.use_normalized_palette:
         palette_workspace = palette_workspace.replace("version", "normalized_version")
     os.makedirs(palette_workspace, exist_ok=True)
     
-    workspace = os.path.dirname(palette_workspace)
-    workspace_list = glob.glob("%s/version*"%workspace)
-    workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-    workspace = "%s/version_%d"%(workspace, (1-max(opt.test, opt.continue_training))+workspace_list) 
+    workspace_dir = os.path.dirname(palette_workspace)
+    if opt.version_id >= 0:
+        workspace = "%s/version_%d"%(workspace_dir, opt.version_id)
+    else:
+        workspace_list = glob.glob("%s/version*"%workspace_dir)
+        # find the newest nerf version
+        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+        workspace = "%s/version_%d"%(workspace_dir, (1-max(opt.test, opt.continue_training))+workspace_list) 
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+    # get palette size from the extracted palette file.
     if opt.use_initialization_from_rgbxy:
-        palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
-        opt.num_basis = palette.shape[0]
+        assert os.path.exists(os.path.join(palette_workspace, 'palette.npz')), "Extracted palette is missing."
+        extracted_palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
+        extracted_hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
+        opt.num_basis = extracted_palette.shape[0]
 
     print(opt)
     seed_everything(opt.seed)
-    
-    if opt.model_mode == "nerf":        
+
+    # load vanilla nerf to extract palette  
+    if opt.extract_palette: 
         from nerf.network import NeRFNetwork
         model = NeRFNetwork(
             encoding="hashgrid",
@@ -149,7 +158,8 @@ if __name__ == '__main__':
             density_thresh=opt.density_thresh,
             bg_radius=opt.bg_radius,
         )
-    elif opt.model_mode == "palette":
+    # load PaletteNeRF
+    else:
         from palette.network import PaletteNetwork
         model = PaletteNetwork(
             opt=opt,
@@ -164,24 +174,21 @@ if __name__ == '__main__':
     
     print(model)
 
-    if opt.extract_palette:    
+    # extract palette
+    if opt.extract_palette: 
         trainer = PaletteTrainer('palette', opt, model, device=device, 
                 fp16=opt.fp16, workspace=palette_workspace, nerf_path=opt.nerf_path)
         train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
         trainer.sample_rays(train_loader) # test and save video
-    elif opt.update_grid:
+
+    # test PaletteNeRF
+    elif opt.test: 
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
                                 use_checkpoint=opt.ckpt, nerf_path=None)
-        train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
-        trainer.model.mark_untrained_grid(train_loader._data.poses, train_loader._data.intrinsics)
-        trainer.model.update_extra_state()
-        trainer.save_checkpoint(full=True, best=False)
-    elif opt.test:
-        trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
-                                use_checkpoint=opt.ckpt, nerf_path=None)
-        if opt.gui:
+        # test in GUI
+        if opt.gui: 
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
-            test_loader = NeRFDataset(opt, device=device, type='video').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
             try:
                 video_loader = NeRFDataset(opt, device=device, type='video').dataloader()
             except: 
@@ -193,40 +200,40 @@ if __name__ == '__main__':
             opt.W = test_loader._data.W
             gui = PaletteGUI(opt, trainer, palette, hist_weights, train_loader=test_loader, video_loader=video_loader)
             gui.render()
-        elif opt.video:
+
+        # render test video
+        elif opt.video: 
             test_loader = NeRFDataset(opt, device=device, type='video').dataloader()
             trainer.test(test_loader, write_video=True) # test and save video
-        else:
+
+        # evaluate quantitative results
+        else: 
             test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()
 
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.
 
             trainer.test(test_loader, write_video=False) # test and save video
-    else:      
-        assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
-        palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
-        hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
-        if opt.use_initialization_from_rgbxy:
-            model.initialize_color(palette, hist_weights)
-            assert(palette.shape[0] == opt.num_basis)
 
+    # train PaletteNeRF 
+    else:     
+        # initialize extracted palette
+        if opt.use_initialization_from_rgbxy:
+            model.initialize_palette(extracted_palette, extracted_hist_weights)
+
+        # setting the trainer
         criterion = torch.nn.MSELoss(reduction='none')
         optimizer = lambda model: torch.optim.Adam(model.get_params(opt.lr), betas=(0.9, 0.99), eps=1e-15)
         # decay to 0.1 * init_lr at last iter step
         scheduler = lambda optimizer: optim.lr_scheduler.LambdaLR(optimizer, lambda iter: 0.1 ** min(iter / opt.iters, 1))
         metrics = [PSNRMeter(), LPIPSMeter(device=device)]
-
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, optimizer=optimizer, criterion=criterion, 
             ema_decay=0.95, fp16=opt.fp16, lr_scheduler=scheduler, scheduler_update_every_step=True, metrics=metrics, 
             use_checkpoint=opt.ckpt, nerf_path=opt.nerf_path, eval_interval=50)
 
+        # train
         train_loader = NeRFDataset(opt, device=device, type='train').dataloader()
-        # palette = np.concatenate([palette[:-2], palette[-2:]], axis=0)
-
-
         valid_loader = NeRFDataset(opt, device=device, type='val', downscale=1).dataloader()
-
         max_epoch = np.ceil(opt.iters / len(train_loader)).astype(np.int32)
         trainer.train(train_loader, valid_loader, max_epoch)
 

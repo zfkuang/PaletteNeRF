@@ -1,28 +1,36 @@
 name: torch-ngp
 channels:
-  - pytorch
   - conda-forge
+  - pytorch
+  - nvidia
 dependencies:
-  - python
-  - cudatoolkit=11.3
+  - python=3.9
   - ninja
   - trimesh
   - opencv
   - tensorboardX
-  - pytorch
   - numpy 
   - pandas
   - tqdm
   - matplotlib
   - rich
   - packaging
-  - scipy
+  - scipy 
+  - pip
+  - pytorch 
+  - torchvision 
+  - torchaudio 
+  - pytorch-cuda=11.6
   - pip:
     - cvxopt
+    - cython
     - imageio
     - lpips
     - torch-ema
     - PyMCubes
     - pysdf
+    - scikit-image
+    - scikit-learn
     - dearpygui
+
     # - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch

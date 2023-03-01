@@ -36,8 +36,6 @@ if __name__ == '__main__':
 
     ### network backbone options
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
-    parser.add_argument('--ff', action='store_true', help="use fully-fused MLP")
-    parser.add_argument('--tcnn', action='store_true', help="use TCNN backend")
 
     ### dataset options
     parser.add_argument('--color_space', type=str, default='srgb', help="Color space, supports (linear, srgb)")
@@ -79,17 +77,7 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
-
-    if opt.ff:
-        opt.fp16 = True
-        assert opt.bg_radius <= 0, "background model is not implemented for --ff"
-        from nerf.network_ff import NeRFNetwork
-    elif opt.tcnn:
-        opt.fp16 = True
-        assert opt.bg_radius <= 0, "background model is not implemented for --tcnn"
-        from nerf.network_tcnn import NeRFNetwork
-    else:
-        from nerf.network import NeRFNetwork
+    from nerf.network import NeRFNetwork
 
     print(opt)
     
@@ -112,14 +100,14 @@ if __name__ == '__main__':
     #criterion = partial(huber_loss, reduction='none')
     #criterion = torch.nn.HuberLoss(reduction='none', beta=0.1) # only available after torch 1.10 ?
 
-    opt.workspace = os.path.join("results", opt.workspace)
+    workspace_dir = os.path.join("results", opt.workspace)
     if opt.version_id >= 0:
-        opt.workspace = "%s/version_%d"%(opt.workspace, opt.version_id)
+        opt.workspace = "%s/version_%d"%(workspace_dir, opt.version_id)
     else:
-        workspace_list = glob.glob("%s/version*"%opt.workspace)
+        workspace_list = glob.glob("%s/version*"%workspace_dir)
         print(workspace_list)
         workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-        opt.workspace = "%s/version_%d"%(opt.workspace, (1-opt.test)+workspace_list) 
+        opt.workspace = "%s/version_%d"%(workspace_dir, (1-opt.test)+workspace_list) 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     if opt.test:
@@ -133,9 +121,7 @@ if __name__ == '__main__':
             opt.W = test_loader._data.W
             gui = NeRFGUI(opt, trainer, test_loader)
             gui.render()
-        
-        else:
-
+        else: 
             test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
             if test_loader.has_gt:
                 trainer.evaluate(test_loader) # blender has gt, so evaluate it.

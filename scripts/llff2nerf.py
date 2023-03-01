@@ -106,6 +106,7 @@ if __name__ == '__main__':
         render_poses = gen_renderposes(poses, bounds, 120)[:,:,:4]
         render_poses[:, 0:3, 1] *= -1
         render_poses[:, 0:3, 2] *= -1
+        
     # inversion of this: https://github.com/Fyusion/LLFF/blob/c6e27b1ee59cb18f054ccb0f87a90214dbe70482/llff/poses/pose_utils.py#L51
     poses = np.concatenate([poses[..., 1:2], poses[..., 0:1], -poses[..., 2:3], poses[..., 3:4]], -1) # (N, 3, 4)
     poses = np.concatenate([poses, render_poses], 0)

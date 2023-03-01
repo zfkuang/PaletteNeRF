@@ -289,6 +289,46 @@ class LPIPSMeter:
     def report(self):
         return f'LPIPS ({self.net}) = {self.measure():.6f}'
 
+from kornia.losses import ssim_loss as dssim
+
+class SSIMMeter:
+    def __init__(self, device=None):
+        self.V = 0
+        self.N = 0
+        self.device=device
+
+    def clear(self):
+        self.V = 0
+        self.N = 0
+        
+    def prepare_inputs(self, *inputs):
+        outputs = []
+        for i, inp in enumerate(inputs):
+            inp = inp.permute(0, 3, 1, 2).contiguous() # [B, 3, H, W]
+            inp = inp.to(self.device)
+            outputs.append(inp)
+        return outputs
+    
+    def update(self, preds, truths):
+        preds, truths = self.prepare_inputs(preds, truths) # [B, N, 3] or [B, H, W, 3], range[0, 1]
+        
+        # simplified since max_pixel_value is 1 here.
+        # psnr = -10 * np.log10(np.mean((preds - truths) ** 2))
+        dssim_ = dssim(preds, truths, window_size=11) # dissimilarity in [0, 1]
+        ssim =  1-2*dssim_ # in [-1, 1]
+        
+        self.V += ssim
+        self.N += 1
+
+    def measure(self):
+        return self.V / self.N
+
+    def write(self, writer, global_step, prefix=""):
+        writer.add_scalar(os.path.join(prefix, "SSIM"), self.measure(), global_step)
+
+    def report(self):
+        return f'SSIM = {self.measure():.6f}'
+
 class Trainer(object):
     def __init__(self, 
                  name, # name of this experiment

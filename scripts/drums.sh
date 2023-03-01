@@ -1,16 +1,16 @@
 #! /bin/bash
 
 datatype="blender"
-name="nerf_ship"
-bound=2
-scale=0.8
+name="nerf_drums"
+bound=4
+scale=1.6
 bg_radius=0
 density_thresh=10
 iters=30000
 offset='0 0 0'
 random_size=0
-data_dir="../data/nerf_synthetic/ship"
-nerf_model=./results/${name}/version_1
+data_dir="../data/nerf_synthetic/drums"
+nerf_model=./results/${name}/version_2
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -83,6 +83,7 @@ elif [[ $model == 'palette' ]]; then
     --density_thresh ${density_thresh} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
+    --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
     --dt_gamma 0 \

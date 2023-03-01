@@ -112,14 +112,19 @@ if __name__ == '__main__':
     
     if opt.test:
         
-        metrics = [PSNRMeter(), LPIPSMeter(device=device)]
+        metrics = [PSNRMeter(), SSIMMeter(device=device), LPIPSMeter(device=device)]
         trainer = Trainer('ngp', opt, model, device=device, workspace=opt.workspace, criterion=criterion, fp16=opt.fp16, metrics=metrics, use_checkpoint=opt.ckpt)
 
-        if opt.gui:
+        if opt.gui:            
+            try:
+                video_loader = NeRFDataset(opt, device=device, type='video').dataloader()
+            except: 
+                print("Loading video poses failed. Skipped.")
+                video_loader = None
             test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
             opt.H = test_loader._data.H
             opt.W = test_loader._data.W
-            gui = NeRFGUI(opt, trainer, test_loader)
+            gui = NeRFGUI(opt, trainer, test_loader, video_loader=video_loader)
             gui.render()
         else: 
             test_loader = NeRFDataset(opt, device=device, type='test').dataloader()

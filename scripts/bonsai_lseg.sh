@@ -1,15 +1,17 @@
 #! /bin/bash
 
-datatype="blender"
-name="nerf_ship"
+datatype="mip360"
+name="nerf_bonsai"
 bound=2
-scale=0.8
+scale=0.16
 bg_radius=0
-density_thresh=10
-iters=30000
 offset='0 0 0'
+density_thresh=10
+lambda_sparse=0.00
+iters=90000
+min_near=0.2
 random_size=0
-data_dir="../data/nerf_synthetic/ship"
+data_dir='../data/mip360/bonsai'
 nerf_model=./results/${name}/version_1
 
 while [[ $# -gt 0 ]]; do
@@ -57,8 +59,11 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --lambda_sparse ${lambda_sparse} \
+    --min_near ${min_near} \
     -O \
-    --dt_gamma 0 \
+    --no_bg \
+    --filter_camera_point \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -69,6 +74,7 @@ elif [[ $model == 'extract' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh}  \
+    --min_near ${min_near} \
     --extract_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -81,12 +87,15 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --min_near ${min_near} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
+    --model_mode palette \
     --use_normalized_palette \
     --separate_radiance \
-    --dt_gamma 0 \
     --datatype ${datatype} \
+    --pred_clip \
+    --clip_dim 16 \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

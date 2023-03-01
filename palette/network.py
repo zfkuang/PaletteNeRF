@@ -293,10 +293,11 @@ class PaletteNetwork(PaletteRenderer):
             {'params': self.offsets_radiance_net.parameters(), 'lr': lr}, 
             {'params': self.omega_net.parameters(), 'lr': lr}, 
             {'params': self.basis_color, 'lr': lr}, 
-            {'params': self.hist_weights, 'lr': lr}, 
             # {'params': self.basis_roughness, 'lr': lr}, 
         ]
 
+        if self.opt.use_initialization_from_rgbxy:
+            params.append({'params': self.hist_weights, 'lr': lr})
         if self.bg_radius > 0:
             params.append({'params': self.encoder_bg.parameters(), 'lr': lr})
             params.append({'params': self.bg_net.parameters(), 'lr': lr})

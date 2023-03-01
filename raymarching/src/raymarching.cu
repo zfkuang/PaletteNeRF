@@ -10,7 +10,7 @@
 #include <stdexcept>
 #include <limits>
 
-#define CHANNEL_MAXIMUM 64
+#define CHANNEL_MAXIMUM 128
 
 #define CHECK_CHANNEL(x) TORCH_CHECK(x <= CHANNEL_MAXIMUM, #x "number of channels is to large")
 #define CHECK_CUDA(x) TORCH_CHECK(x.device().is_cuda(), #x " must be a CUDA tensor")

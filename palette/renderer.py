@@ -92,9 +92,9 @@ class RegionEdit(nn.Module):
         self.delta_hsv = torch.zeros(self.opt.num_basis, 3)
         self.delta_hsv[...,1:3] = 1
 
-    def update_cent(self, mean_xyz, mean_clip):     
-        self.mean_xyz = mean_xyz[None,...]
-        self.mean_clip = mean_clip[None,...]
+    def update_cent(self, mean_xyz=None, mean_clip=None):     
+        self.mean_xyz = None if mean_xyz is None else mean_xyz[None,...]
+        self.mean_clip = None if mean_clip is None else mean_clip[None,...]
     
     def update_std(self, std_xyz=None, std_clip=None):
         if std_xyz is not None:
@@ -130,7 +130,10 @@ class RegionEdit(nn.Module):
             
         # Semantic map based filtering
         if clip_feat is not None and self.mean_clip is not None:
-            weight *= torch.exp(-((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)/self.std_clip)
+            #temp = ((clip_feat-self.mean_clip)**2).sum(dim=-1, keepdim=True)
+            weight *= torch.exp(-((clip_feat-self.mean_clip)**2.).sum(dim=-1, keepdim=True)/self.std_clip)
+            # temp /= (self.mean_clip**2+1e-6).sum(dim=-1, keepdim=True)
+            #weight *= (temp < self.std_clip).float() # vtorch.exp(-(temp/self.std_clip))
 
         hsv_new = hsv.clone()
         hsv_new[...,0] = torch.fmod((hsv[...,0]+self.delta_hsv[...,0]+360), 360)
@@ -209,6 +212,7 @@ class PaletteRenderer(nn.Module):
         self.stylizer = None
         
         self.view_dep_weight = 1
+        self.offsets_weight = 1
         
         # prepare aabb with a 6D tensor (xmin, ymin, zmin, xmax, ymax, zmax)
         # NOTE: aabb (can be rectangular) is only used to generate points, we still rely on bound (always cubic) to calculate density grid and hashing.
@@ -287,6 +291,7 @@ class PaletteRenderer(nn.Module):
         self.local_step = 0
         
     def run(self, rays_o, rays_d, num_steps=128, upsample_steps=128, bg_color=None, perturb=False, gui_mode=False, test_mode=False, **kwargs):
+        # TODO: add pure pytorch version
         raise ValueError("Pure pytorch version is not available for now.")
 
     def run_cuda(self, rays_o, rays_d, dt_gamma=0, bg_color=None, perturb=False, force_all_rays=False, 
@@ -337,6 +342,11 @@ class PaletteRenderer(nn.Module):
             diffuse = diffuse.reshape(M, 3)
             clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
+            if self.opt.no_delta:
+                d_color = d_color*0
+            if self.opt.no_dir:
+                dir_color = dir_color*0
+
             basis_color = self.basis_color[None,:,:].clamp(0, 1)
             if self.freeze_basis_color:
                 basis_color = basis_color.detach()
@@ -370,6 +380,9 @@ class PaletteRenderer(nn.Module):
                 
                 smooth_weight = torch.exp(- xyzs_weight - rgb_weight - clip_weight).detach()
                 smooth_norm = ((omega_diff-omega)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight
+                if self.opt.pred_clip:
+                    smooth_norm += ((clip_feat_diff-clip_feat)**2).sum(dim=-1, keepdim=True) * smooth_weight
+                    
             else: 
                 smooth_norm = torch.zeros_like(omega_sparsity)
 
@@ -469,19 +482,25 @@ class PaletteRenderer(nn.Module):
                 diffuse = diffuse.reshape(M, 3)
                 clip_feat = clip_feat.reshape(M, self.opt.clip_dim)
 
+                if self.opt.no_delta:
+                    d_color = d_color*0
+                if self.opt.no_dir:
+                    dir_color = dir_color*0
+                        
+
                 basis_color = self.basis_color[None,:,:].clamp(0, 1)
                 
                 if self.stylizer is not None: # Photorealistic style transfer
                     rgbs = self.stylizer(radiance, omega, basis_color, offsets, view_dep)
                 else:
-                    final_color = (F.softplus(radiance)*(basis_color+offsets))# .clamp(0, 1)
+                    final_color = (F.softplus(radiance)*(basis_color+self.offsets_weight * offsets))# .clamp(0, 1)
                     unscaled_final_color = (basis_color+offsets)# .clamp(0, 1)
 
                     if self.edit is not None: # filtered appearence editing
                         final_color = self.edit(final_color, xyzs, clip_feat)
                     
                     basis_rgb = omega*final_color # .clamp(0, 1) # N_rays, N_sample, N_basis, 3
-                    unscaled_basis_rgb = omega*unscaled_final_color
+                    unscaled_basis_rgb = unscaled_final_color
 
                     # adding view dependent color with editable scale
                     rgbs = basis_rgb.sum(dim=-2) + self.view_dep_weight * view_dep # (N_rays, N_samples_, 3)
@@ -492,24 +511,25 @@ class PaletteRenderer(nn.Module):
                 sigmas = self.density_scale * sigmas
 
                 if not gui_mode:
-                    ### palette parts
+                    ### auxiliary informations of palettes for debugging
 
                     direct_rgb = diffuse+view_dep
                     basis_rgb = basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
                     unscaled_basis_rgb = unscaled_basis_rgb.reshape(M, self.opt.num_basis*3) # (N_rays, N_samples_, N_basis*3)
                     
                     raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, direct_rgb, deltas, weights_sum, direct_rgb_map, T_thresh)
-                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, view_dep, deltas, weights_sum, dir_rgb_map, T_thresh)
+                    raymarching.composite_rays_flex(n_alive, n_step, 3, rays_alive, rays_t, sigmas, view_dep, deltas, weights_sum, view_dep_rgb_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis, rays_alive, rays_t, sigmas, omega, deltas, weights_sum, basis_acc_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, basis_rgb, deltas, weights_sum, basis_rgb_map, T_thresh)
                     raymarching.composite_rays_flex(n_alive, n_step, self.opt.num_basis*3, rays_alive, rays_t, sigmas, unscaled_basis_rgb, deltas, weights_sum, unscaled_basis_rgb_map, T_thresh)
                  
+                # clip feature map
                 raymarching.composite_rays_flex(n_alive, n_step, self.opt.clip_dim, rays_alive, rays_t, sigmas, clip_feat, deltas, weights_sum, clip_feat_map, T_thresh)
 
-                # IMPORTANT: make sure this composite rays is execute after all composite rays flex operations
+                ### !!! IMPORTANT !!! make sure this composite rays function is executed after all composite rays flex operations
+                # Since this step will modify rays_alive
                 raymarching.composite_rays(n_alive, n_step, rays_alive, rays_t, sigmas, rgbs, deltas, weights_sum, depth, image, T_thresh)
-                #print(f'step = {step}, n_step = {n_step}, n_alive = {n_alive}, xyzs: {xyzs.shape}')
-                
+
                 rays_alive = rays_alive[rays_alive >= 0]
 
                 step += n_step
@@ -530,13 +550,13 @@ class PaletteRenderer(nn.Module):
 
             if not gui_mode:
                 direct_rgb_map = direct_rgb_map + (1 - weights_sum).unsqueeze(-1) * bg_color
-                dir_rgb_map = dir_rgb_map.view(*prefix, 3)
+                view_dep_rgb_map = view_dep_rgb_map.view(*prefix, 3)
                 direct_rgb_map = direct_rgb_map.view(*prefix, 3)
                 basis_acc_map = basis_acc_map.view(*prefix, self.num_basis)
                 basis_rgb_map = basis_rgb_map.view(*prefix, self.num_basis*3)
                 unscaled_basis_rgb_map = unscaled_basis_rgb_map.view(*prefix, self.num_basis*3)
                 results['direct_rgb'] = direct_rgb_map
-                results['dir_rgb'] = dir_rgb_map
+                results['view_dep_rgb'] = view_dep_rgb_map
                 results['basis_rgb'] = basis_rgb_map
                 results['unscaled_basis_rgb'] = unscaled_basis_rgb_map
                 results['basis_acc'] = basis_acc_map
@@ -557,26 +577,27 @@ class PaletteRenderer(nn.Module):
 
         # never stage when cuda_ray
         if staged and not self.cuda_ray:
-            results = {}
-            for b in range(B):
-                head = 0
-                while head < N:
-                    tail = min(head + max_ray_batch, N)
-                    results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, gui_mode=gui_mode, **kwargs)
-                    # results_.pop("weights_sum")
-                    for k, v in results_.items():
-                        if v is None:
-                            continue
-                        if k == 'weights_sum':
-                            v = v[None,...]
-                        if k not in results.keys():
-                            if v.ndim == 2:
-                                results[k] = torch.empty((B, N), device=device)
-                            else:
-                                results[k] = torch.empty((B, N, v.shape[-1]), device=device)
-                        results[k][b:b+1, head:tail] = v
-                    head += max_ray_batch
-            
+            pass 
+            # TODO: add pure pytorch version
+            # results = {}
+            # for b in range(B):
+            #     head = 0
+            #     while head < N:
+            #         tail = min(head + max_ray_batch, N)
+            #         results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, gui_mode=gui_mode, **kwargs)
+            #         # results_.pop("weights_sum")
+            #         for k, v in results_.items():
+            #             if v is None:
+            #                 continue
+            #             if k == 'weights_sum':
+            #                 v = v[None,...]
+            #             if k not in results.keys():
+            #                 if v.ndim == 2:
+            #                     results[k] = torch.empty((B, N), device=device)
+            #                 else:
+            #                     results[k] = torch.empty((B, N, v.shape[-1]), device=device)
+            #             results[k][b:b+1, head:tail] = v
+            #         head += max_ray_batch
         else:
             results = _run(rays_o, rays_d, gui_mode=gui_mode, **kwargs)
 

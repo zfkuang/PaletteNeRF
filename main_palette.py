@@ -12,7 +12,6 @@ from loss import huber_loss
 #torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
-
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
     parser.add_argument('nerf_path', type=str)
@@ -100,6 +99,7 @@ if __name__ == '__main__':
     parser.add_argument("--sigma_color", type=float, default=0.2, help='sigma of color (used in smooth loss)')
     parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
+
     # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
     
     # CLIP feat options
@@ -180,25 +180,23 @@ if __name__ == '__main__':
                 fp16=opt.fp16, workspace=palette_workspace, nerf_path=opt.nerf_path)
         train_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
         trainer.sample_rays(train_loader) # test and save video
-
-    # test PaletteNeRF
-    elif opt.test: 
+    elif opt.test:
+        criterion = torch.nn.MSELoss(reduction='none')        
+        metrics = [PSNRMeter(), SSIMMeter(device=device), LPIPSMeter(device=device), 
+                TVMeter(opt=opt, device=device), SparsityMeter(opt=opt, device=device)]
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
-                                use_checkpoint=opt.ckpt, nerf_path=None)
-        # test in GUI
-        if opt.gui: 
+                                criterion=criterion, metrics=metrics, use_checkpoint=opt.ckpt, nerf_path=None)
+        if opt.gui:
             assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
-            test_loader = NeRFDataset(opt, device=device, type='test').dataloader()
+            test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
             try:
                 video_loader = NeRFDataset(opt, device=device, type='video').dataloader()
             except: 
                 print("Loading video poses failed. Skipped.")
                 video_loader = None
-            palette = np.load(os.path.join(palette_workspace, 'palette.npz'))['palette']
-            hist_weights = np.load(os.path.join(palette_workspace, 'hist_weights.npz'))['hist_weights']
             opt.H = test_loader._data.H
             opt.W = test_loader._data.W
-            gui = PaletteGUI(opt, trainer, palette, hist_weights, train_loader=test_loader, video_loader=video_loader)
+            gui = PaletteGUI(opt, trainer, train_loader=test_loader, video_loader=video_loader)
             gui.render()
 
         # render test video
@@ -209,9 +207,9 @@ if __name__ == '__main__':
         # evaluate quantitative results
         else: 
             test_loader = NeRFDataset(opt, device=device, type='test', n_test=30).dataloader()
-
+            
             if test_loader.has_gt:
-                trainer.evaluate(test_loader) # blender has gt, so evaluate it.
+                trainer.evaluate(test_loader, save_images=True) # blender has gt, so evaluate it.
 
             trainer.test(test_loader, write_video=False) # test and save video
 
@@ -220,6 +218,8 @@ if __name__ == '__main__':
         # initialize extracted palette
         if opt.use_initialization_from_rgbxy:
             model.initialize_palette(extracted_palette, extracted_hist_weights)
+        else:
+            model.initialize_color(None, None)
 
         # setting the trainer
         criterion = torch.nn.MSELoss(reduction='none')

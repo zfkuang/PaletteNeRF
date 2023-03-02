@@ -14,7 +14,6 @@ cd freqencoder
 pip install .
 cd .. 
 
-# turned off by default, very slow to compile.
-#cd ffmlp
-#pip install .
-#cd ..
+cd palette
+pip install .
+cd .. 

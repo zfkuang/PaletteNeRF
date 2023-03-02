@@ -1,17 +1,16 @@
-#! /bin/bash
 
-datatype="blender"
-name="nerf_lego"
-bound=2
-scale=0.8
-bg_radius=0
-density_thresh=10
-iters=30000
-offset='0 0 0'
-patch_size=8
-random_size=0
-data_dir="../../data/nerf_synthetic/lego"
-nerf_model=./results/${name}/version_1
+CONFIGFILE=$1;
+shift
+
+if [ $# -eq 0 ]; then
+    echo "Error: a config file is required."
+    exit
+fi
+if [ ! -f "$CONFIGFILE" ]; then
+    echo "Error: $CONFIGFILE does not exist."
+    exit
+fi
+source $CONFIGFILE
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -55,8 +54,11 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --lambda_sparse ${lambda_sparse} \
+    --min_near ${min_near} \
     -O \
-    --dt_gamma 0 \
+    --no_bg \
+    --filter_close_point \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -67,7 +69,9 @@ elif [[ $model == 'extract' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh}  \
-    --extract_palette --use_normalized_palette
+    --min_near ${min_near} \
+    --extract_palette \
+    --use_normalized_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
     $data_dir \
@@ -79,14 +83,31 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
-    --patch_size ${patch_size} \
+    --min_near ${min_near} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --use_normalized_palette \
-    --dt_gamma 0 \
-    --datatype ${datatype} \
+    --datatype "mip360" \
+    $test_mode
+elif [[ $model == 'palette_lseg' ]]; then
+    OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
+    $data_dir \
+    $nerf_model \
+    -O \
+    --iters ${iters} \
+    --bound ${bound} \
+    --scale ${scale} \
+    --offset ${offset} \
+    --bg_radius ${bg_radius} \
+    --density_thresh ${density_thresh} \
+    --min_near ${min_near} \
+    --random_size ${random_size} \
+    --use_initialization_from_rgbxy \
+    --use_normalized_palette \
+    --datatype "mip360" \
+    --pred_clip \
+    --clip_dim 16 \
     $test_mode
 else
-    echo "Invalid model. Options are: nerf, extract, palette"
+    echo "Invalid model. Options are: nerf, extract, palette, palette_lseg"
 fi
-# python main_nerf.py ../data/refnerf/toycar --workspace nerf_toycar --bound 24 --dt_gamma 0 --bg_radius 32 -O --gui

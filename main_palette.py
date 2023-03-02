@@ -12,9 +12,11 @@ from loss import huber_loss
 #torch.autograd.set_detect_anomaly(True)
 
 if __name__ == '__main__':
+
     parser = argparse.ArgumentParser()
     parser.add_argument('path', type=str)
     parser.add_argument('nerf_path', type=str)
+    parser.add_argument('--config', help="configuration file", type=str, required=False)
     parser.add_argument('-O', action='store_true', help="equals --fp16 --cuda_ray --preload")
     parser.add_argument('--test', action='store_true', help="test mode")
     parser.add_argument('--video', action='store_true', help="video mode")
@@ -33,7 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--update_extra_interval', type=int, default=16, help="iter interval to update extra status (only valid when using --cuda_ray)")
     parser.add_argument('--max_ray_batch', type=int, default=4096, help="batch size of rays at inference to avoid OOM (only valid when NOT using --cuda_ray)")
     parser.add_argument('--patch_size', type=int, default=1, help="[experimental] render patches in training, so as to apply LPIPS loss. 1 means disabled, use [64, 32, 16] to enable")
-    parser.add_argument('--random_size', type=int, default=0, help="[experimental] rendom size for image-based smoothing")
+    parser.add_argument('--random_size', type=int, default=0, help="[experimental] rendom size for image space smoothing")
 
     ### network backbone options
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
@@ -64,17 +66,20 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
+    parser.add_argument('--continue_training', action='store_true', help="continue training")
+
     ### Palette Extraction options
     parser.add_argument('--extract_palette', action='store_true', help="extract palette")
     parser.add_argument('--use_normalized_palette', action='store_true', help="use palette with normalized input")
     parser.add_argument('--error_thres', type=float, default=5.0/255, help='error threshold for palette extraction')
     parser.add_argument('--update_grid', action='store_true', help="update density grid")
-    parser.add_argument("--num_basis", type=int, default=12, help='number of basis')
-    parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
+    parser.add_argument("--num_basis", type=int, default=4, help='number of basis')
 
     # PaletteNeRF options   
-    parser.add_argument('--continue_training', action='store_true', help="continue training")
-    
+    parser.add_argument("--use_initialization_from_rgbxy", action='store_true', help='if specified, use initialization from rgbxy')
+    parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='epoch number when palette color is released')
+    parser.add_argument("--smooth_loss_start_epoch", type=int, default=30, help='epoch number when smooth loss is added')
+
     parser.add_argument("--lambda_sparsity", type=float, default=2e-4, help='weight of sparsity loss')
     parser.add_argument("--lambda_smooth", type=float, default=4e-3, help='weight of smooth loss')
     parser.add_argument("--lambda_patchsmooth", type=float, default=0, help='weight of smooth loss')
@@ -82,14 +87,12 @@ if __name__ == '__main__':
     parser.add_argument("--lambda_offsets", type=float, default=0.03, help='weight of color offsets regularity loss')
     parser.add_argument("--lambda_weight", type=float, default=0.05, help='weight of weight loss')
     parser.add_argument("--lambda_palette", type=float, default=0.001, help='weight of weight loss')
-    parser.add_argument("--smooth_epoch", type=int, default=30, help='number of maximum epoch before add smooth loss')
     
-    parser.add_argument("--sigma_clip", type=float, default=0, help='sigma of clip feature (used in smooth loss)')
-    parser.add_argument("--sigma_color", type=float, default=0.2, help='sigma of color (used in smooth loss)')
-    parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
-    parser.add_argument("--max_freeze_palette_epoch", type=int, default=100, help='number of maximum epoch to freeze palette color')
+    parser.add_argument("--smooth_sigma_xyz", type=float, default=0.005, help='sigma of 3D position (used in smooth loss)')
+    parser.add_argument("--smooth_sigma_color", type=float, default=0.2, help='sigma of color (used in smooth loss)')
+    parser.add_argument("--smooth_sigma_clip", type=float, default=0, help='sigma of clip feature (used in smooth loss)')
 
-    # parser.add_argument("--max_freeze_geometry_epoch", type=int, default=20, help='number of maximum epoch to freeze geometry')
+    parser.add_argument("--lweight_decay_epoch", type=int, default=100, help='epoch number when lambda weight drops to 0')
     
     # CLIP feat options
     parser.add_argument('--pred_clip', action='store_true', help="predict clip featuer")
@@ -108,6 +111,11 @@ if __name__ == '__main__':
         # assert opt.patch_size > 16, "patch_size should > 16 to run LPIPS loss."
         assert opt.num_rays % (opt.patch_size ** 2) == 0, "patch_size ** 2 should be dividable by num_rays."
 
+    if "version" not in os.path.basename(opt.nerf_path):
+        nerf_list = glob.glob("%s/version*"%opt.nerf_path)
+        # find the newest nerf version
+        nerf_id = max([0] + [int(x.split("_")[-1]) for x in nerf_list])
+        opt.nerf_path = "%s/version_%d"%(opt.nerf_path, nerf_id) 
 
     palette_workspace=opt.nerf_path.replace("results", "results_palette")
     if opt.use_normalized_palette:
@@ -119,9 +127,9 @@ if __name__ == '__main__':
         workspace = "%s/version_%d"%(workspace_dir, opt.version_id)
     else:
         workspace_list = glob.glob("%s/version*"%workspace_dir)
-        # find the newest nerf version
-        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-        workspace = "%s/version_%d"%(workspace_dir, (1-max(opt.test, opt.continue_training))+workspace_list) 
+        # find the newest palettenerf version
+        workspace_id = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+        workspace = "%s/version_%d"%(workspace_dir, (1-max(opt.test, opt.continue_training))+workspace_id) 
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -176,7 +184,7 @@ if __name__ == '__main__':
         trainer = PaletteTrainer('palette', opt, model, device=device, workspace=workspace, fp16=opt.fp16,
                                 criterion=criterion, metrics=metrics, use_checkpoint=opt.ckpt, nerf_path=None)
         if opt.gui:
-            assert(os.path.exists(os.path.join(palette_workspace, 'palette.npz')))
+
             test_loader = NeRFDataset(opt, device=device, type='traintest').dataloader()
             try:
                 video_loader = NeRFDataset(opt, device=device, type='video').dataloader()

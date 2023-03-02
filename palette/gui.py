@@ -504,6 +504,9 @@ class PaletteGUI:
                 def callback_reset_palette(sender, app_data):
                     self.palette = self.origin_palette.clone()
                     self.trainer.model.view_dep_weight = 1
+                    self.trainer.model.offset_weight = 1
+                    dpg.set_value("offsets_weight", 1)
+                    dpg.set_value("view_dep_weight", 1)
                     refresh_palette_color()
                     self.need_update = True
                     

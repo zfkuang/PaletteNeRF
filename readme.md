@@ -1,6 +1,6 @@
 # <span style="color: #6ada43">P</span><span style="color: #f43233">a</span><span style="color: #9c7563">l</span><span style="color: #1fa0e7">e</span><span style="color: #eba602">t</span><span style="color: #eba602">t</span><span style="color: #1fa0e7">e</span>NeRF: Palette-based Appearance Editing of Neural Radiance Fields
 
-### [Project Page](palettenerf.github.io) | [Paper](https://arxiv.org/pdf/2212.10699.pdf) 
+### [Project Page](https://palettenerf.github.io) | [Paper](https://arxiv.org/pdf/2212.10699.pdf) 
 <img src="assets/teaser.png">
 
 
@@ -61,7 +61,7 @@ bash scripts/run_blender.sh scripts/configs_blender/lego.sh -m palette -g
 A GUI window will automatically pop-up. Here's an example:
 <img src="assets/gui.png">
 
-To understand how to operate the GUI, you can check our video demo provided in our [project page](palettenerf.github.io).
+To understand how to operate the GUI, you can check our video demo provided in our [project page](https://palettenerf.github.io).
 
 ## Testing
 To quantitatively evaluate our model or render test views, run:

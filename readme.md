@@ -75,6 +75,11 @@ bash scripts/run_blender.sh scripts/configs_blender/lego.sh -m palette -v
 ```
 The video trajectories are consistent with the original trajectories from NeRF and Mip-NeRF 360. 
 All results are saved under `results_palette`.
+
+# Todo
+* Add tutorial for semantic guided editing.
+* Add tutorial for photorealistic style transfer.
+
 # Citation
 
 We will highly appreciate it if you would like to cite our work via:

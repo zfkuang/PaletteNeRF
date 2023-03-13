@@ -669,7 +669,7 @@ class PaletteTrainer(object):
                 self.lambda_palette = self.opt.lambda_palette
                 
             # Add smooth loss after a few epochs
-            if epoch >= self.opt.smooth_epoch:
+            if epoch >= self.opt.smooth_loss_start_epoch:
                 self.require_smooth_loss = True
                 self.model.require_smooth_loss = True
 

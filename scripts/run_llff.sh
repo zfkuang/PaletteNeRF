@@ -1,33 +1,30 @@
-#! /bin/bash
 
-datatype="blender"
-name="nerf_ficus"
-bound=2
-scale=0.8
-bg_radius=0
-density_thresh=10
-iters=30000
-offset='0 0 0'
-random_size=0
-data_dir="../data/nerf_synthetic/ficus"
-nerf_model=./results/${name}/version_1
+CONFIGFILE=$1;
+shift
+
+if [ $# -eq 0 ]; then
+    echo "Error: a config file is required."
+    exit
+fi
+if [ ! -f "$CONFIGFILE" ]; then
+    echo "Error: $CONFIGFILE does not exist."
+    exit
+fi
+source $CONFIGFILE
 
 while [[ $# -gt 0 ]]; do
   case $1 in
     -t|--test)
       test=True
       shift # past argument
-      shift # past value
       ;;    
     -v|--video)
       video=True
       shift # past argument
-      shift # past value
       ;;
     -g|--gui)
       gui=True
       shift # past argument
-      shift # past value
       ;;
     -m|--model)
       model="$2"
@@ -57,8 +54,10 @@ if [[ $model == 'nerf' ]]; then
     --scale ${scale} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --lambda_sparse ${lambda_sparse} \
+    --min_near ${min_near} \
+    --no_bg \
     -O \
-    --dt_gamma 0 \
     $test_mode
 elif [[ $model == 'extract' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
@@ -68,8 +67,10 @@ elif [[ $model == 'extract' ]]; then
     --bound ${bound} \
     --scale ${scale} \
     --bg_radius ${bg_radius} \
-    --density_thresh ${density_thresh}  \
-    --extract_palette --use_normalized_palette
+    --density_thresh ${density_thresh} \
+    --min_near ${min_near} \
+    --extract_palette \
+    --use_normalized_palette
 elif [[ $model == 'palette' ]]; then
     OMP_NUM_THREADS=8 CUDA_VISIBLE_DEVICES=0 python main_palette.py \
     $data_dir \
@@ -81,11 +82,11 @@ elif [[ $model == 'palette' ]]; then
     --offset ${offset} \
     --bg_radius ${bg_radius} \
     --density_thresh ${density_thresh} \
+    --min_near ${min_near} \
     --random_size ${random_size} \
     --use_initialization_from_rgbxy \
     --use_normalized_palette \
-        --dt_gamma 0 \
-    --datatype ${datatype} \
+    --datatype "llff" \
     $test_mode
 else
     echo "Invalid model. Options are: nerf, extract, palette"

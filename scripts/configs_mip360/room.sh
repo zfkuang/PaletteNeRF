@@ -1,0 +1,12 @@
+name="nerf_room"
+bound=2 
+scale=0.13 
+bg_radius=0
+offset='0 0 -0.5'
+density_thresh=10
+lambda_sparse=0.00
+iters=90000
+min_near=0.05
+random_size=0
+data_dir='./data/mip360/room'
+nerf_model="./results/${name}"

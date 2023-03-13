@@ -66,12 +66,12 @@ class NeRFRenderer(nn.Module):
                  min_near=0.2,
                  density_thresh=0.01,
                  bg_radius=-1,
-                 filter_camera_point=False
+                 filter_close_point=False
                  ):
         super().__init__()
 
         self.bound = bound
-        self.filter_camera_point = filter_camera_point
+        self.filter_close_point = filter_close_point
         self.cascade = 1 + math.ceil(math.log2(bound))
         self.grid_size = 128
         self.density_scale = density_scale
@@ -454,7 +454,7 @@ class NeRFRenderer(nn.Module):
                             # update count 
                             count[cas, indices] += mask
                             too_close[cas, indices] += mask_close
-                            if self.filter_camera_point:
+                            if self.filter_close_point:
                                 too_close[cas, indices] += mask_camera
                             head += S
     

@@ -1,4 +1,4 @@
-name: torch-ngp
+name: palettenerf
 channels:
   - conda-forge
   - pytorch
@@ -32,5 +32,6 @@ dependencies:
     - scikit-image
     - scikit-learn
     - dearpygui
-
+    - kornia
+    - imageio-ffmpeg
     # - git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch

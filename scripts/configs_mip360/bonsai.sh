@@ -1,0 +1,12 @@
+name="nerf_bonsai"
+bound=2
+scale=0.16
+bg_radius=0
+offset='0 0 0'
+density_thresh=10
+lambda_sparse=0.00
+iters=90000
+min_near=0.2
+random_size=0
+data_dir='./data/mip360/bonsai'
+nerf_model="./results/${name}"

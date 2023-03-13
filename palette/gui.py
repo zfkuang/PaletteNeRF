@@ -504,6 +504,9 @@ class PaletteGUI:
                 def callback_reset_palette(sender, app_data):
                     self.palette = self.origin_palette.clone()
                     self.trainer.model.view_dep_weight = 1
+                    self.trainer.model.offset_weight = 1
+                    dpg.set_value("_offsets_weight", 1)
+                    dpg.set_value("_view_dep_weight", 1)
                     refresh_palette_color()
                     self.need_update = True
                     
@@ -513,13 +516,13 @@ class PaletteGUI:
                 def call_back_set_offsets_weight(sender, app_data):
                     self.trainer.model.offsets_weight = app_data
                     self.need_update = True
-                dpg.add_slider_float(label="offsets_weight", min_value=0, max_value=20, format="%f", 
+                dpg.add_slider_float(label="offsets_weight", tag="_offsets_weight", min_value=0, max_value=20, format="%f", 
                                     default_value=1, callback=call_back_set_offsets_weight)
                 
                 def call_back_set_view_dep_weight(sender, app_data):
                     self.trainer.model.view_dep_weight = app_data
                     self.need_update = True
-                dpg.add_slider_float(label="view_dep_weight", min_value=0, max_value=20, format="%f", 
+                dpg.add_slider_float(label="view_dep_weight", tag="_view_dep_weight", min_value=0, max_value=20, format="%f", 
                                     default_value=1, callback=call_back_set_view_dep_weight)
                 
                 def callback_set_palette_id(sender, app_data):

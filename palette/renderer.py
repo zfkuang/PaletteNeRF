@@ -360,17 +360,17 @@ class PaletteRenderer(nn.Module):
             if self.require_smooth_loss:
                 # add perturbations on points
                 xyzs_diff = (xyzs + torch.rand_like(xyzs) * self.bound * 0.03).clamp(-self.bound, self.bound)
-                xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / (self.bound * 0.07)**2 
+
                 _, clip_feat_diff, omega_diff, _, _, diffuse_diff =  self(xyzs_diff, dirs)
                 omega_diff = omega_diff.reshape(M, self.num_basis, 1)
                 diffuse_diff = diffuse_diff.reshape(M, 3)
                 
-                if self.opt.pred_clip and self.opt.sigma_clip > 0:
-                    clip_weight = (clip_feat-clip_feat_diff).norm(dim=-1, keepdim=True) / self.opt.sigma_clip
+                xyzs_weight = (xyzs-xyzs_diff).norm(dim=-1, keepdim=True)**2 / self.bound**2 / self.opt.smooth_sigma_xyz
+                rgb_weight = (diffuse-diffuse_diff).norm(dim=-1, keepdim=True)**2 / self.opt.smooth_sigma_color # (N_rays, N_samples_, 1)
+                if self.opt.pred_clip and self.opt.smooth_sigma_clip > 0:
+                    clip_weight = (clip_feat-clip_feat_diff).norm(dim=-1, keepdim=True) / self.opt.smooth_sigma_clip
                 else:
                     clip_weight = 0
-
-                rgb_weight = (diffuse-diffuse_diff).norm(dim=-1, keepdim=True)**2 / self.opt.sigma_color # (N_rays, N_samples_, 1)
                 
                 smooth_weight = torch.exp(- xyzs_weight - rgb_weight - clip_weight).detach()
                 smooth_norm = ((omega_diff-omega)[...,0]**2).sum(dim=-1, keepdim=True) * smooth_weight
@@ -567,25 +567,6 @@ class PaletteRenderer(nn.Module):
         if staged and not self.cuda_ray:
             pass 
             # TODO: add pure pytorch version
-            # results = {}
-            # for b in range(B):
-            #     head = 0
-            #     while head < N:
-            #         tail = min(head + max_ray_batch, N)
-            #         results_ = _run(rays_o[b:b+1, head:tail], rays_d[b:b+1, head:tail], test_mode=test_mode, gui_mode=gui_mode, **kwargs)
-            #         # results_.pop("weights_sum")
-            #         for k, v in results_.items():
-            #             if v is None:
-            #                 continue
-            #             if k == 'weights_sum':
-            #                 v = v[None,...]
-            #             if k not in results.keys():
-            #                 if v.ndim == 2:
-            #                     results[k] = torch.empty((B, N), device=device)
-            #                 else:
-            #                     results[k] = torch.empty((B, N, v.shape[-1]), device=device)
-            #             results[k][b:b+1, head:tail] = v
-            #         head += max_ray_batch
         else:
             results = _run(rays_o, rays_d, gui_mode=gui_mode, **kwargs)
 

@@ -1,5 +1,6 @@
 import torch
 import argparse
+import configargparse
 
 from nerf.provider import NeRFDataset
 from nerf.gui import NeRFGUI
@@ -32,7 +33,6 @@ if __name__ == '__main__':
     parser.add_argument('--update_extra_interval', type=int, default=16, help="iter interval to update extra status (only valid when using --cuda_ray)")
     parser.add_argument('--max_ray_batch', type=int, default=4096, help="batch size of rays at inference to avoid OOM (only valid when NOT using --cuda_ray)")
     parser.add_argument('--patch_size', type=int, default=1, help="[experimental] render patches in training, so as to apply LPIPS loss. 1 means disabled, use [64, 32, 16] to enable")
-    parser.add_argument('--lambda_sparse', type=float, default=0.05, help="[experimental] lambda for sparsity loss")
 
     ### network backbone options
     parser.add_argument('--fp16', action='store_true', help="use amp mixed precision training")
@@ -63,8 +63,10 @@ if __name__ == '__main__':
     parser.add_argument('--clip_text', type=str, default='', help="text input for CLIP guidance")
     parser.add_argument('--rand_pose', type=int, default=-1, help="<0 uses no rand pose, =0 only uses rand pose, >0 sample one rand pose every $ known poses")
 
-    
-    parser.add_argument('--filter_camera_point', action='store_true', help="filter out grids that are too close to camera")
+    # Additional options
+    parser.add_argument('--lambda_sparse', type=float, default=0.05, help="[experimental] lambda for sparsity loss")
+    parser.add_argument('--filter_close_point', action='store_true', help="filter out grids that are too close to camera")
+
     opt = parser.parse_args()
 
     if opt.O:
@@ -91,7 +93,7 @@ if __name__ == '__main__':
         min_near=opt.min_near,
         density_thresh=opt.density_thresh,
         bg_radius=opt.bg_radius,
-        filter_camera_point=opt.filter_camera_point
+        filter_close_point=opt.filter_close_point
     )
     
     print(model)
@@ -106,8 +108,9 @@ if __name__ == '__main__':
     else:
         workspace_list = glob.glob("%s/version*"%workspace_dir)
         print(workspace_list)
-        workspace_list = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
-        opt.workspace = "%s/version_%d"%(workspace_dir, (1-opt.test)+workspace_list) 
+        workspace_id = max([0] + [int(x.split("_")[-1]) for x in workspace_list])
+        opt.workspace = "%s/version_%d"%(workspace_dir, (1-opt.test)+workspace_id) 
+        
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     if opt.test:

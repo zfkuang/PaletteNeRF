@@ -73,12 +73,16 @@ bash scripts/run_blender.sh scripts/configs_blender/lego.sh -m palette -t
 ```bash
 bash scripts/run_blender.sh scripts/configs_blender/lego.sh -m palette -v
 ```
+
 The video trajectories are consistent with the original trajectories from NeRF and Mip-NeRF 360. 
 All results are saved under `results_palette`.
 
-# Todo
-* Add tutorial for semantic guided editing.
-* Add tutorial for photorealistic style transfer.
+## Semantic-guided editing
+Currently our code only supports semantic-guided editing on Mip360 dataset. For convinience, we provide a modified implementation of paper [Language-driven Semantic Segmentation (LSeg)](https://github.com/isl-org/lang-seg) at ```third-party/lang-seg```. After installing the repo, run:
+```bash
+python extract_lseg_feature.py --datadir <path/to/data/of/mip360>
+```
+This script will generate compressed semantic feature maps of all training images. You can then train and test the model using the same commands by replacing ```-m palette``` to ```-m palette_lseg```.
 
 # Citation
 
@@ -110,7 +114,7 @@ We will highly appreciate it if you would like to cite our work via:
         year = {2022}
     }
     ```
-* The color palette extraction code is adapted from [posternerf](https://github.com/kenji-tojo/posternerf) with the method introduced in [Efficient palette-based decomposition and recoloring of images via RGBXY-space geometry](https://cragl.cs.gmu.edu/fastlayers/)
+* The color palette extraction code is adapted from [posternerf](https://github.com/kenji-tojo/posternerf) with the method introduced in [Efficient palette-based decomposition and recoloring of images via RGBXY-space geometry](https://cragl.cs.gmu.edu/fastlayers/):
     ```
     @article{tojo2022posternerf,
 	title = {Recolorable Posterization of Volumetric Radiance Fields Using Visibility-Weighted Palette Extraction},
@@ -138,6 +142,18 @@ We will highly appreciate it if you would like to cite our work via:
     publisher = {ACM Press},
     address   = {New York, NY, USA},
     keywords  = {images, layers, painting, palette, generalized barycentric coordinates, convex hull, RGB, color space, recoloring, compositing, mixing}
+    }
+    ```
+
+* The semantic segmentation code is adapted from the official implementation of paper [Language-driven Semantic Segmentation (LSeg)](https://github.com/isl-org/lang-seg):
+    ```
+    @inproceedings{
+    li2022languagedriven,
+    title={Language-driven Semantic Segmentation},
+    author={Boyi Li and Kilian Q Weinberger and Serge Belongie and Vladlen Koltun and Rene Ranftl},
+    booktitle={International Conference on Learning Representations},
+    year={2022},
+    url={https://openreview.net/forum?id=RriDjddCLN}
     }
     ```
 

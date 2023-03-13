@@ -78,7 +78,7 @@ The video trajectories are consistent with the original trajectories from NeRF a
 All results are saved under `results_palette`.
 
 ## Semantic-guided editing
-Currently our code only supports semantic-guided editing on Mip360 dataset. For convinience, we provide a modified implementation of paper [Language-driven Semantic Segmentation (LSeg)](https://github.com/isl-org/lang-seg) at ```third-party/lang-seg```. After installing the repo, run:
+Currently our code only supports semantic-guided editing on Mip360 dataset. For convinience, we provide a modified implementation of paper [Language-driven Semantic Segmentation (LSeg)](https://github.com/isl-org/lang-seg) at ```third-party/lang-seg```. Follow the installization steps in the repo (make sure you are running it in an independent environment since it might not be compatible with ours), then run:
 ```bash
 python extract_lseg_feature.py --datadir <path/to/data/of/mip360>
 ```

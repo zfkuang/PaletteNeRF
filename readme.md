@@ -5,7 +5,7 @@
 
 
 This repository is the official PyTorch implementation of the method described in [
-PaletteNeRF: Palette-based Appearance Editing of Neural Radiance Fields](). It is based on the [ashawkey's implementation of Instant-NGP](https://github.com/ashawkey/torch-ngp) (i.e. torch-ngp).
+PaletteNeRF: Palette-based Appearance Editing of Neural Radiance Fields](https://palettenerf.github.io). It is based on the [ashawkey's implementation of Instant-NGP](https://github.com/ashawkey/torch-ngp) (i.e. torch-ngp).
 
 This repository is tested in Ubuntu 20.04 + PyTorch 1.13.1 + RTX 3090.
 
@@ -85,7 +85,7 @@ python extract_lseg_feature.py --datadir <path/to/data/of/mip360>
 This script will generate compressed semantic feature maps of all training images. You can then train and test the model using the same commands by replacing ```-m palette``` to ```-m palette_lseg```.
 
 ## Model Zoo
-comming soon
+coming soon
 
 # Citation
 

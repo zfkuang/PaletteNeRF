@@ -84,6 +84,9 @@ python extract_lseg_feature.py --datadir <path/to/data/of/mip360>
 ```
 This script will generate compressed semantic feature maps of all training images. You can then train and test the model using the same commands by replacing ```-m palette``` to ```-m palette_lseg```.
 
+## Model Zoo
+comming soon
+
 # Citation
 
 We will highly appreciate it if you would like to cite our work via:
